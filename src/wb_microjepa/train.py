@@ -11,7 +11,9 @@ import torch.nn.functional as F
 from .determinism import set_deterministic
 from .worlds import MixedWorldSampler, fixed_probe_set
 from .models import WBMICROJEPA
+from .brain_models import BrainGraphMicroJEPA
 from .monitoring import DiagnosticsLogger
+from .brain_topology import ID_TO_REGION, region_count_summary
 
 
 def load_config(path: str) -> Dict:
@@ -24,6 +26,15 @@ def choose_device(cfg: Dict) -> torch.device:
     if requested == "auto":
         return torch.device("cuda" if torch.cuda.is_available() else "cpu")
     return torch.device(requested)
+
+
+def build_model(cfg: Dict):
+    model_type = cfg.get("model", {}).get("type", "flat_microjepa")
+    if model_type == "flat_microjepa":
+        return WBMICROJEPA(cfg)
+    if model_type == "brain_graph_microjepa":
+        return BrainGraphMicroJEPA(cfg)
+    raise ValueError(f"Unknown model.type: {model_type}")
 
 
 def batch_to_tensors(batch: Dict, device: torch.device) -> Dict[str, torch.Tensor]:
@@ -42,11 +53,9 @@ def compute_losses(model, logits, trace, target, cfg):
     prediction_loss = F.mse_loss(pred_emb, target_emb)
     identity_loss = F.cross_entropy(logits, target)
 
-    # Sparsity encourages not all micro-brains activating.
     activations = trace["activations"]
     sparsity_loss = activations.mean()
 
-    # Diversity proxy on selected votes: discourage identical votes.
     votes = trace["votes"]
     if votes.shape[1] > 1:
         normalized = F.normalize(votes, dim=-1)
@@ -96,15 +105,19 @@ def run_probes(model, device, logger: DiagnosticsLogger, epoch: int):
         topk = trace["topk_indices"][0].cpu().numpy().tolist()
         weights = trace["weights"][0].cpu().numpy().tolist()
         confs = trace["confidences"][0].cpu().numpy().tolist()
+        region_ids = trace.get("region_ids")
 
         top_microbrains = []
         for i in range(min(10, len(topk))):
-            top_microbrains.append({
+            entry = {
                 "id": f"MB_{topk[i]:04d}",
                 "index": int(topk[i]),
                 "weight": float(weights[i]),
                 "confidence": float(confs[i]),
-            })
+            }
+            if region_ids is not None:
+                entry["region"] = ID_TO_REGION[int(region_ids[topk[i]])]
+            top_microbrains.append(entry)
 
         traces_json.append({
             "world": p.world_name,
@@ -124,14 +137,24 @@ def run_probes(model, device, logger: DiagnosticsLogger, epoch: int):
 
     activation_matrix = np.stack(activation_rows)
     stats = []
+    region_ids = None
+    if hasattr(model, "graph"):
+        region_ids = model.graph.region_ids.cpu().numpy()
     for mb in range(activation_matrix.shape[1]):
-        stats.append({
+        row = {
             "microbrain_id": f"MB_{mb:04d}",
             "mean_probe_activation": float(activation_matrix[:, mb].mean()),
             "max_probe_activation": float(activation_matrix[:, mb].max()),
             "active_on_probe_count_gt_0_5": int((activation_matrix[:, mb] > 0.5).sum()),
-        })
+        }
+        if region_ids is not None:
+            row["region"] = ID_TO_REGION[int(region_ids[mb])]
+        stats.append(row)
     logger.save_microbrain_stats(pd.DataFrame(stats))
+
+    if hasattr(model, "graph"):
+        logger.save_brain_projection(epoch, model.graph, activation_matrix.mean(axis=0))
+        logger.save_region_activation_summary(epoch, model.graph, activation_matrix.mean(axis=0))
 
     model.train()
 
@@ -157,7 +180,9 @@ def train(config_path: str):
         modulo_n=cfg["worlds"]["modulo_n"],
     )
 
-    model = WBMICROJEPA(cfg).to(device)
+    model = build_model(cfg).to(device)
+    if hasattr(model, "graph"):
+        print("BrainGraph region counts:", region_count_summary(model.graph))
     opt = torch.optim.AdamW(
         model.parameters(),
         lr=cfg["training"]["learning_rate"],
