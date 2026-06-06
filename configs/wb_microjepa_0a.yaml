@@ -1,0 +1,41 @@
+run:
+  name: wb_microjepa_0a
+  seed: 42
+  deterministic: true
+  output_dir: runs
+
+worlds:
+  train_worlds:
+    - number_line
+    - modulo_10
+  max_number: 100
+  train_max_number: 60
+  actions: [-3, -2, -1, 1, 2, 3]
+  modulo_n: 10
+
+model:
+  num_worlds: 2
+  num_numbers: 101
+  num_actions: 6
+  num_microbrains: 512
+  embedding_dim: 64
+  action_dim: 32
+  world_dim: 16
+  hidden_dim: 128
+  adapter_dim: 16
+  top_k_microbrains: 64
+
+training:
+  epochs: 80
+  batch_size: 512
+  learning_rate: 0.0003
+  weight_decay: 0.01
+  log_every_epochs: 5
+  probe_every_epochs: 5
+  device: auto
+
+loss:
+  prediction_weight: 1.0
+  identity_weight: 0.5
+  sparsity_weight: 0.001
+  diversity_weight: 0.001
