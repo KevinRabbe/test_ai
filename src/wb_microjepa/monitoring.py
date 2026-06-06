@@ -6,6 +6,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import torch
 
+from .brain_topology import ID_TO_REGION
+
 
 class DiagnosticsLogger:
     def __init__(self, run_dir: Path):
@@ -56,6 +58,52 @@ class DiagnosticsLogger:
 
     def save_microbrain_stats(self, stats: pd.DataFrame) -> None:
         stats.to_csv(self.run_dir / "microbrain_stats.csv", index=False)
+
+    def save_brain_projection(self, epoch: int, graph, activations: np.ndarray) -> None:
+        coords = graph.coords.cpu().numpy()
+        regions = graph.region_ids.cpu().numpy()
+
+        plt.figure(figsize=(9, 7))
+        scatter = plt.scatter(coords[:, 0], coords[:, 1], c=activations, s=42, alpha=0.9)
+        plt.colorbar(scatter, label="mean probe activation")
+        plt.xlabel("x")
+        plt.ylabel("y")
+        plt.title(f"BrainGraph XY activation projection - epoch {epoch}")
+        for region_id in sorted(set(regions.tolist())):
+            mask = regions == region_id
+            if mask.any():
+                cx, cy = coords[mask, 0].mean(), coords[mask, 1].mean()
+                plt.text(cx, cy, ID_TO_REGION[int(region_id)], fontsize=8, ha="center")
+        plt.tight_layout()
+        plt.savefig(self.run_dir / "plots" / f"brain_xy_activation_epoch_{epoch:04d}.png", dpi=160)
+        plt.close()
+
+        plt.figure(figsize=(9, 7))
+        scatter = plt.scatter(coords[:, 0], coords[:, 2], c=activations, s=42, alpha=0.9)
+        plt.colorbar(scatter, label="mean probe activation")
+        plt.xlabel("x")
+        plt.ylabel("z")
+        plt.title(f"BrainGraph XZ activation projection - epoch {epoch}")
+        plt.tight_layout()
+        plt.savefig(self.run_dir / "plots" / f"brain_xz_activation_epoch_{epoch:04d}.png", dpi=160)
+        plt.close()
+
+    def save_region_activation_summary(self, epoch: int, graph, activations: np.ndarray) -> None:
+        regions = graph.region_ids.cpu().numpy()
+        rows = []
+        for region_id in sorted(set(regions.tolist())):
+            mask = regions == region_id
+            rows.append({
+                "epoch": epoch,
+                "region": ID_TO_REGION[int(region_id)],
+                "unit_count": int(mask.sum()),
+                "mean_activation": float(activations[mask].mean()),
+                "max_activation": float(activations[mask].max()),
+            })
+        out = self.run_dir / "region_activation_summary.csv"
+        df = pd.DataFrame(rows)
+        header = not out.exists()
+        df.to_csv(out, mode="a", header=header, index=False)
 
 
 def tensor_to_list(x):
