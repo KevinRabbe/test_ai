@@ -10,6 +10,11 @@ Whitebox MicroBrain Joint Embedding Predictive Architecture.
 4. The model must learn transition structure.
 5. Every prediction exposes a trace.
 
+See:
+
+- `docs/PROJECT_RULES.md`
+- `docs/ROADMAP.md`
+
 ## First prototype
 
 WB-MicroJEPA-0A:
@@ -22,9 +27,12 @@ WB-MicroJEPA-0A:
 - Cortex micro-brain swarm
 - Confidence-weighted voting aggregator
 - Decoder probe
-- Verifier
+- Verifier/data oracle outside the model
 - Fixed probe set
 - Diagnostics logger
+- Evaluation grid
+- Static HTML report
+- Dense JEPA baseline scaffold
 
 ## Install
 
@@ -38,6 +46,30 @@ pip install -r requirements.txt
 python -m src.wb_microjepa.train --config configs/wb_microjepa_0a.yaml
 ```
 
+## Evaluate
+
+```bash
+python -m src.wb_microjepa.evaluate runs/wb_microjepa_0a
+```
+
+## Generate report
+
+```bash
+python -m src.wb_microjepa.report runs/wb_microjepa_0a
+```
+
+Open:
+
+```text
+runs/wb_microjepa_0a/report.html
+```
+
+## Windows one-shot run
+
+```powershell
+./scripts/run_0a.ps1
+```
+
 ## Output
 
 Runs are saved under:
@@ -46,8 +78,10 @@ Runs are saved under:
 runs/<run_name>/
 ├── config_resolved.json
 ├── metrics.csv
+├── evaluation.csv
 ├── probe_traces.jsonl
 ├── microbrain_stats.csv
+├── report.html
 ├── checkpoints/
 └── plots/
 ```
@@ -55,3 +89,7 @@ runs/<run_name>/
 ## First research question
 
 Does arranging parameters into many inspectable tiny predictive units produce more interpretable world-structure learning than a dense model with the same parameter budget?
+
+## Important note
+
+This is only version 0A. It is deliberately small. The current goal is not to be smart yet; the current goal is to make training, tracing, evaluation, and inspection work reliably before adding more brain modules.
