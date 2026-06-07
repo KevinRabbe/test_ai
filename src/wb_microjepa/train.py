@@ -47,7 +47,42 @@ def batch_to_tensors(batch: Dict, device: torch.device) -> Dict[str, torch.Tenso
     }
 
 
+def _decoder_autoencode_loss(model, cfg: Dict, device: torch.device) -> torch.Tensor:
+    lw = cfg["loss"]
+    weight = float(lw.get("decoder_autoencode_weight", 0.0))
+    if weight <= 0.0:
+        return torch.tensor(0.0, device=device)
+
+    num_numbers = int(cfg["model"]["num_numbers"])
+    max_samples = int(lw.get("decoder_autoencode_samples", num_numbers))
+    if max_samples >= num_numbers:
+        states = torch.arange(num_numbers, dtype=torch.long, device=device)
+    else:
+        states = torch.randint(0, num_numbers, (max_samples,), dtype=torch.long, device=device)
+
+    encoded = model.encode_state(states)
+    logits = model.decoder(encoded)
+    return F.cross_entropy(logits, states)
+
+
+def _state_smoothness_loss(model, cfg: Dict, device: torch.device) -> torch.Tensor:
+    lw = cfg["loss"]
+    weight = float(lw.get("state_smoothness_weight", 0.0))
+    if weight <= 0.0:
+        return torch.tensor(0.0, device=device)
+
+    num_numbers = int(cfg["model"]["num_numbers"])
+    states = torch.arange(num_numbers, dtype=torch.long, device=device)
+    emb = model.encode_state(states)
+    if emb.shape[0] < 3:
+        return torch.tensor(0.0, device=device)
+    first_diff = emb[1:] - emb[:-1]
+    second_diff = first_diff[1:] - first_diff[:-1]
+    return (second_diff ** 2).mean()
+
+
 def compute_losses(model, logits, trace, target, cfg):
+    device = logits.device
     target_emb = model.encode_state(target).detach()
     pred_emb = trace["predicted_target_embedding"]
 
@@ -64,7 +99,10 @@ def compute_losses(model, logits, trace, target, cfg):
         eye = torch.eye(sim.shape[1], device=sim.device).unsqueeze(0)
         diversity_loss = ((sim * (1 - eye)) ** 2).mean()
     else:
-        diversity_loss = torch.tensor(0.0, device=logits.device)
+        diversity_loss = torch.tensor(0.0, device=device)
+
+    decoder_autoencode_loss = _decoder_autoencode_loss(model, cfg, device)
+    state_smoothness_loss = _state_smoothness_loss(model, cfg, device)
 
     lw = cfg["loss"]
     loss = (
@@ -72,6 +110,8 @@ def compute_losses(model, logits, trace, target, cfg):
         + lw["identity_weight"] * identity_loss
         + lw["sparsity_weight"] * sparsity_loss
         + lw["diversity_weight"] * diversity_loss
+        + float(lw.get("decoder_autoencode_weight", 0.0)) * decoder_autoencode_loss
+        + float(lw.get("state_smoothness_weight", 0.0)) * state_smoothness_loss
     )
     return loss, {
         "loss": float(loss.detach().cpu()),
@@ -79,6 +119,8 @@ def compute_losses(model, logits, trace, target, cfg):
         "identity_loss": float(identity_loss.detach().cpu()),
         "sparsity_loss": float(sparsity_loss.detach().cpu()),
         "diversity_loss": float(diversity_loss.detach().cpu()),
+        "decoder_autoencode_loss": float(decoder_autoencode_loss.detach().cpu()),
+        "state_smoothness_loss": float(state_smoothness_loss.detach().cpu()),
     }
 
 
@@ -133,7 +175,8 @@ def run_probes(model, device, logger: DiagnosticsLogger, epoch: int):
     logger.save_activation_heatmap(epoch, np.stack(activation_rows), labels)
     logger.log_probe_traces(epoch, traces_json)
 
-    embeddings = model.state_embedding.weight.detach().cpu().numpy()
+    states = torch.arange(model.num_numbers, dtype=torch.long, device=device)
+    embeddings = model.encode_state(states).detach().cpu().numpy()
     logger.save_embedding_plot(epoch, embeddings, title="State embeddings")
 
     activation_matrix = np.stack(activation_rows)
