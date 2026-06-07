@@ -76,6 +76,12 @@ streamlit run src/wb_microjepa/monitor_dashboard.py
 python -m src.wb_microjepa.compare_runs
 ```
 
+## Analyze cases
+
+```bash
+python -m src.wb_microjepa.analyze_cases runs/wb_microjepa_0b_braingraph_train_numeric_ae
+```
+
 ## Windows one-shot run
 
 ```powershell
