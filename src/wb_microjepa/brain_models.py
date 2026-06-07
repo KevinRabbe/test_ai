@@ -1,4 +1,4 @@
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 import math
 import torch
 import torch.nn as nn
@@ -64,6 +64,7 @@ class BrainGraphCortexSwarm(nn.Module):
         world_dim: int,
         use_world_modulation: bool,
         world_modulation_strength: float,
+        world_modulation_regions: Optional[List[str]],
     ):
         super().__init__()
         self.graph = graph
@@ -73,6 +74,12 @@ class BrainGraphCortexSwarm(nn.Module):
         self.message_passing_steps = int(message_passing_steps)
         self.use_world_modulation = bool(use_world_modulation)
         self.world_modulation_strength = float(world_modulation_strength)
+        self.world_modulation_regions = list(world_modulation_regions or [])
+        allowed_region_ids = {
+            REGION_TO_ID[region_name]
+            for region_name in self.world_modulation_regions
+            if region_name in REGION_TO_ID
+        }
 
         self.unit_id = nn.Embedding(self.num_units, adapter_dim)
         self.region_embedding = nn.Embedding(len(REGION_TO_ID), adapter_dim)
@@ -100,6 +107,11 @@ class BrainGraphCortexSwarm(nn.Module):
         self.register_buffer("neighbor_mask", graph.neighbor_mask)
         self.register_buffer("coords", graph.coords)
         self.register_buffer("region_ids", graph.region_ids)
+        modulation_mask = torch.tensor(
+            [1.0 if REGION_TO_ID[u.region] in allowed_region_ids else 0.0 for u in graph.units],
+            dtype=torch.float32,
+        ).unsqueeze(-1)
+        self.register_buffer("world_modulation_mask", modulation_mask)
 
     def _local_message_pass(self, h: torch.Tensor) -> torch.Tensor:
         # h: [B, U, H]
@@ -131,9 +143,10 @@ class BrainGraphCortexSwarm(nn.Module):
 
         h = self.shared_core(torch.cat([x_exp, topo_exp], dim=-1))
         if self.use_world_modulation and world_emb is not None:
-            scale = 1.0 + self.world_modulation_strength * self.world_scale(world_emb)
-            shift = self.world_modulation_strength * self.world_shift(world_emb)
-            h = h * scale.unsqueeze(1) + shift.unsqueeze(1)
+            scale = self.world_scale(world_emb)
+            shift = self.world_shift(world_emb)
+            mask = self.world_modulation_mask.to(h.device).unsqueeze(0)
+            h = h * (1.0 + mask * self.world_modulation_strength * scale.unsqueeze(1)) + mask * self.world_modulation_strength * shift.unsqueeze(1)
         h = self._local_message_pass(h)
 
         raw_activation = self.activation_head(h).squeeze(-1)
@@ -165,6 +178,7 @@ class BrainGraphCortexSwarm(nn.Module):
         if self.use_world_modulation and world_emb is not None:
             trace["world_scale"] = scale.detach()
             trace["world_shift"] = shift.detach()
+            trace["world_modulation_mask"] = self.world_modulation_mask.detach().cpu()
         return aggregated_delta, trace
 
 
@@ -199,6 +213,7 @@ class BrainGraphMicroJEPA(nn.Module):
             world_dim=m["world_dim"],
             use_world_modulation=bool(m.get("use_world_modulation", False)),
             world_modulation_strength=float(m.get("world_modulation_strength", 1.0)),
+            world_modulation_regions=list(m.get("world_modulation_regions", [])),
         )
         self.decoder = MLP(m["embedding_dim"], m["hidden_dim"], m["num_numbers"], layers=2)
 
