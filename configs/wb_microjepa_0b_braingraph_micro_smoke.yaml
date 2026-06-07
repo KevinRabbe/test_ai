@@ -2,6 +2,7 @@ run:
   name: wb_microjepa_0b_braingraph_micro_smoke
   seed: 42
   deterministic: true
+  clear_output: true
   output_dir: runs
 
 worlds:
@@ -52,7 +53,7 @@ training:
   weight_decay: 0.01
   log_every_epochs: 1
   probe_every_epochs: 1
-  device: cpu
+  device: auto
 
 loss:
   prediction_weight: 1.0

@@ -1,5 +1,5 @@
 run:
-  name: wb_microjepa_0b_braingraph_smoke
+  name: wb_microjepa_0b_braingraph_train_tuned
   seed: 42
   deterministic: true
   clear_output: true
@@ -27,7 +27,6 @@ model:
   adapter_dim: 8
   top_k_microbrains: 32
 
-# Brain-shaped 3D topology. Region counts are topology only, not task-answer logic.
 topology:
   type: brain_graph_3d
   seed: 42
@@ -47,16 +46,16 @@ topology:
   message_passing_steps: 1
 
 training:
-  epochs: 4
-  batch_size: 64
-  learning_rate: 0.0003
+  epochs: 200
+  batch_size: 256
+  learning_rate: 0.0002
   weight_decay: 0.01
-  log_every_epochs: 1
-  probe_every_epochs: 1
+  log_every_epochs: 10
+  probe_every_epochs: 10
   device: auto
 
 loss:
-  prediction_weight: 1.0
-  identity_weight: 0.5
+  prediction_weight: 0.75
+  identity_weight: 0.75
   sparsity_weight: 0.001
   diversity_weight: 0.001

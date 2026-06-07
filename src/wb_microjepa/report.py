@@ -31,6 +31,29 @@ def evaluation_summary(evaluation: pd.DataFrame) -> pd.DataFrame:
     raise ValueError("Unknown evaluation.csv schema. Expected classifier_correct/nearest_correct or correct column.")
 
 
+def case_type_summary(evaluation: pd.DataFrame) -> pd.DataFrame | None:
+    if "case_type" not in evaluation.columns:
+        return None
+
+    if "classifier_correct" in evaluation.columns and "nearest_correct" in evaluation.columns:
+        return evaluation.groupby(["world", "split", "case_type"]).agg(
+            classifier_accuracy=("classifier_correct", "mean"),
+            nearest_accuracy=("nearest_correct", "mean"),
+            classifier_mae=("classifier_absolute_error", "mean"),
+            nearest_mae=("nearest_absolute_error", "mean"),
+            samples=("classifier_correct", "count"),
+        ).reset_index()
+
+    if "correct" in evaluation.columns:
+        return evaluation.groupby(["world", "split", "case_type"]).agg(
+            accuracy=("correct", "mean"),
+            mean_absolute_error=("absolute_error", "mean") if "absolute_error" in evaluation.columns else ("correct", "count"),
+            samples=("correct", "count"),
+        ).reset_index()
+
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("run_dir", type=str)
@@ -53,6 +76,16 @@ def main():
         summary = evaluation_summary(evaluation)
         sections.append("<h2>Evaluation summary</h2>")
         sections.append(summary.to_html(index=False))
+        csum = case_type_summary(evaluation)
+        if csum is not None:
+            sections.append("<h2>Case type summary</h2>")
+            sections.append(csum.to_html(index=False))
+
+    region_case_path = run_dir / "region_case_activation_summary.csv"
+    if region_case_path.exists():
+        region_case = pd.read_csv(region_case_path)
+        sections.append("<h2>Region by case type</h2>")
+        sections.append(region_case.to_html(index=False))
 
     if stats_path.exists():
         stats = pd.read_csv(stats_path).sort_values("mean_probe_activation", ascending=False)

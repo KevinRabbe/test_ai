@@ -4,3 +4,5 @@ pandas
 matplotlib
 pyyaml
 scikit-learn
+streamlit
+plotly

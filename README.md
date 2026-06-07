@@ -64,6 +64,18 @@ Open:
 runs/wb_microjepa_0a/report.html
 ```
 
+## Monitoring dashboard
+
+```bash
+streamlit run src/wb_microjepa/monitor_dashboard.py
+```
+
+## Compare runs
+
+```bash
+python -m src.wb_microjepa.compare_runs
+```
+
 ## Windows one-shot run
 
 ```powershell
