@@ -209,6 +209,8 @@ class BrainGraphMicroJEPA(nn.Module):
         self.graph = build_brain_graph(cfg)
         self.num_numbers = int(m["num_numbers"])
         self.embedding_dim = int(m["embedding_dim"])
+        self.use_action_delta_basis = bool(m.get("use_action_delta_basis", False))
+        self.action_delta_basis_weight = float(m.get("action_delta_basis_weight", 0.0))
 
         self.state_encoder = NumericStateEncoder(
             num_numbers=m["num_numbers"],
@@ -219,6 +221,10 @@ class BrainGraphMicroJEPA(nn.Module):
         )
         self.action_embedding = nn.Embedding(m["num_actions"], m["action_dim"])
         self.world_embedding = nn.Embedding(m["num_worlds"], m["world_dim"])
+        if self.use_action_delta_basis:
+            self.action_delta_basis = MLP(m["action_dim"] + m["world_dim"], m["hidden_dim"], m["embedding_dim"], layers=2)
+        else:
+            self.action_delta_basis = None
 
         combined_dim = m["embedding_dim"] + m["action_dim"] + m["world_dim"]
         self.input_norm = nn.LayerNorm(combined_dim)
@@ -257,13 +263,23 @@ class BrainGraphMicroJEPA(nn.Module):
         world_emb = self.world_embedding(world_id)
         x = self.input_norm(torch.cat([state_emb, action_emb, world_emb], dim=-1))
 
-        delta, trace = self.cortex(x, world_emb=world_emb)
-        predicted_target_emb = state_emb + delta
+        braingraph_delta, trace = self.cortex(x, world_emb=world_emb)
+        if self.use_action_delta_basis:
+            action_basis_input = torch.cat([action_emb, world_emb], dim=-1)
+            action_delta_basis = self.action_delta_basis(action_basis_input)
+        else:
+            action_delta_basis = torch.zeros_like(braingraph_delta)
+
+        combined_delta = braingraph_delta + self.action_delta_basis_weight * action_delta_basis
+        predicted_target_emb = state_emb + combined_delta
         logits = self.decoder(predicted_target_emb)
         decoded = logits.argmax(dim=-1)
 
         trace["state_embedding"] = state_emb.detach()
-        trace["predicted_delta"] = delta
+        trace["braingraph_delta"] = braingraph_delta
+        trace["action_delta_basis"] = action_delta_basis
+        trace["predicted_delta"] = combined_delta
+        trace["combined_delta"] = combined_delta
         trace["predicted_target_embedding"] = predicted_target_emb.detach()
         trace["decoded_prediction"] = decoded.detach()
         trace["model_type"] = "brain_graph_microjepa"

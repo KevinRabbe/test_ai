@@ -108,6 +108,20 @@ class DiagnosticsLogger:
         header = not out.exists()
         df.to_csv(out, mode="a", header=header, index=False)
 
+    def save_action_delta_summary(self, rows: List[Dict]) -> None:
+        out = self.run_dir / "action_delta_summary.csv"
+        df = pd.DataFrame(rows)
+        if df.empty:
+            return
+        summary = df.groupby(["world", "action"]).agg(
+            samples=("action", "count"),
+            action_delta_norm=("action_delta_norm", "mean"),
+            braingraph_delta_norm=("braingraph_delta_norm", "mean"),
+            combined_delta_norm=("combined_delta_norm", "mean"),
+            delta_cosine=("delta_cosine", "mean"),
+        ).reset_index()
+        summary.to_csv(out, index=False)
+
 
 def tensor_to_list(x):
     if isinstance(x, torch.Tensor):

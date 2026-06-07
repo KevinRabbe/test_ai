@@ -212,6 +212,18 @@ def render_probes(traces: Optional[List[Dict]]) -> None:
         st.json(row.to_dict())
 
 
+def render_action_deltas(action_delta: Optional[pd.DataFrame]) -> None:
+    if action_delta is None:
+        st.info("No action_delta_summary.csv found for this run.")
+        return
+
+    st.dataframe(action_delta, use_container_width=True)
+    if {"world", "action", "combined_delta_norm"}.issubset(action_delta.columns):
+        pivot = action_delta.pivot_table(index="action", columns="world", values="combined_delta_norm", aggfunc="mean").fillna(0.0)
+        st.subheader("Combined delta norm by action and world")
+        st.dataframe(pivot, use_container_width=True)
+
+
 def render_compare(root: Path) -> None:
     run_dirs = list_runs(root)
     if not run_dirs:
@@ -266,7 +278,7 @@ def main() -> None:
     region_case = load_csv(run_dir / "region_case_activation_summary.csv")
     traces = load_jsonl(run_dir / "probe_traces.jsonl")
 
-    tabs = st.tabs(["Overview", "Evaluation", "Region Cases", "BrainGraph", "Probes", "Compare Runs", "Plots"])
+    tabs = st.tabs(["Overview", "Evaluation", "Region Cases", "Action Deltas", "BrainGraph", "Probes", "Compare Runs", "Plots"])
     with tabs[0]:
         render_overview(run_dir, metrics, evaluation, stats, region)
     with tabs[1]:
@@ -274,12 +286,14 @@ def main() -> None:
     with tabs[2]:
         render_region_case(region_case)
     with tabs[3]:
-        render_brain(cfg, stats, run_dir)
+        render_action_deltas(load_csv(run_dir / "action_delta_summary.csv"))
     with tabs[4]:
-        render_probes(traces)
+        render_brain(cfg, stats, run_dir)
     with tabs[5]:
-        render_compare(root)
+        render_probes(traces)
     with tabs[6]:
+        render_compare(root)
+    with tabs[7]:
         plot_dir = run_dir / "plots"
         if plot_dir.exists():
             for path in sorted(plot_dir.glob("*.png")):

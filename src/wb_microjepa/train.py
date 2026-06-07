@@ -120,6 +120,24 @@ def compute_losses(model, logits, trace, state, target, cfg):
     decoder_autoencode_loss = _decoder_autoencode_loss(model, cfg, device)
     state_smoothness_loss = _state_smoothness_loss(model, cfg, device)
 
+    braingraph_delta = trace.get("braingraph_delta", trace.get("predicted_delta"))
+    action_delta_basis = trace.get("action_delta_basis")
+    combined_delta = trace.get("combined_delta", trace.get("predicted_delta"))
+    if braingraph_delta is not None:
+        braingraph_delta_norm = braingraph_delta.norm(dim=-1).mean()
+    else:
+        braingraph_delta_norm = torch.tensor(0.0, device=device)
+    if action_delta_basis is not None:
+        action_delta_norm = action_delta_basis.norm(dim=-1).mean()
+        delta_cosine = F.cosine_similarity(braingraph_delta, action_delta_basis, dim=-1).mean() if braingraph_delta is not None else torch.tensor(0.0, device=device)
+    else:
+        action_delta_norm = torch.tensor(0.0, device=device)
+        delta_cosine = torch.tensor(0.0, device=device)
+    if combined_delta is not None:
+        combined_delta_norm = combined_delta.norm(dim=-1).mean()
+    else:
+        combined_delta_norm = torch.tensor(0.0, device=device)
+
     lw = cfg["loss"]
     loss = (
         lw["prediction_weight"] * prediction_loss
@@ -139,6 +157,10 @@ def compute_losses(model, logits, trace, state, target, cfg):
         "delta_consistency_loss": float(delta_loss.detach().cpu()),
         "decoder_autoencode_loss": float(decoder_autoencode_loss.detach().cpu()),
         "state_smoothness_loss": float(state_smoothness_loss.detach().cpu()),
+        "action_delta_norm": float(action_delta_norm.detach().cpu()),
+        "braingraph_delta_norm": float(braingraph_delta_norm.detach().cpu()),
+        "combined_delta_norm": float(combined_delta_norm.detach().cpu()),
+        "delta_cosine_mean": float(delta_cosine.detach().cpu()),
     }
 
 
@@ -148,6 +170,7 @@ def run_probes(model, device, logger: DiagnosticsLogger, epoch: int):
     labels = []
     activation_rows = []
     traces_json = []
+    action_rows = []
 
     model.eval()
     for p in probes:
@@ -158,6 +181,14 @@ def run_probes(model, device, logger: DiagnosticsLogger, epoch: int):
         logits, trace = model(state, action_id, world_id)
         pred = int(logits.argmax(dim=-1).item())
         correct = pred == p.target
+
+        braingraph_delta = trace.get("braingraph_delta", trace.get("predicted_delta"))
+        action_delta_basis = trace.get("action_delta_basis")
+        combined_delta = trace.get("combined_delta", trace.get("predicted_delta"))
+        action_delta_norm = float(action_delta_basis.norm(dim=-1).mean().item()) if action_delta_basis is not None else 0.0
+        braingraph_delta_norm = float(braingraph_delta.norm(dim=-1).mean().item()) if braingraph_delta is not None else 0.0
+        combined_delta_norm = float(combined_delta.norm(dim=-1).mean().item()) if combined_delta is not None else 0.0
+        delta_cosine = float(F.cosine_similarity(braingraph_delta, action_delta_basis, dim=-1).mean().item()) if braingraph_delta is not None and action_delta_basis is not None else 0.0
 
         activations = trace["activations"][0].cpu().numpy()
         activation_rows.append(activations)
@@ -188,6 +219,19 @@ def run_probes(model, device, logger: DiagnosticsLogger, epoch: int):
             "prediction": pred,
             "correct": correct,
             "top_microbrains": top_microbrains,
+            "action_delta_norm": action_delta_norm,
+            "braingraph_delta_norm": braingraph_delta_norm,
+            "combined_delta_norm": combined_delta_norm,
+            "delta_cosine": delta_cosine,
+        })
+
+        action_rows.append({
+            "world": p.world_name,
+            "action": p.action,
+            "action_delta_norm": action_delta_norm,
+            "braingraph_delta_norm": braingraph_delta_norm,
+            "combined_delta_norm": combined_delta_norm,
+            "delta_cosine": delta_cosine,
         })
 
     logger.save_activation_heatmap(epoch, np.stack(activation_rows), labels)
@@ -217,6 +261,7 @@ def run_probes(model, device, logger: DiagnosticsLogger, epoch: int):
     if hasattr(model, "graph"):
         logger.save_brain_projection(epoch, model.graph, activation_matrix.mean(axis=0))
         logger.save_region_activation_summary(epoch, model.graph, activation_matrix.mean(axis=0))
+    logger.save_action_delta_summary(action_rows)
 
     model.train()
 

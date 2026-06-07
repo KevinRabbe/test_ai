@@ -54,6 +54,14 @@ def case_type_summary(evaluation: pd.DataFrame) -> pd.DataFrame | None:
     return None
 
 
+def action_delta_summary(run_dir: Path) -> pd.DataFrame | None:
+    path = run_dir / "action_delta_summary.csv"
+    if not path.exists():
+        return None
+    df = pd.read_csv(path)
+    return df if not df.empty else None
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("run_dir", type=str)
@@ -91,6 +99,12 @@ def main():
         stats = pd.read_csv(stats_path).sort_values("mean_probe_activation", ascending=False)
         sections.append("<h2>Top active micro-brains</h2>")
         sections.append(stats.head(30).to_html(index=False))
+
+    action_delta_path = run_dir / "action_delta_summary.csv"
+    if action_delta_path.exists():
+        action_delta = pd.read_csv(action_delta_path)
+        sections.append("<h2>Action delta summary</h2>")
+        sections.append(action_delta.to_html(index=False))
 
     region_path = run_dir / "region_activation_summary.csv"
     if region_path.exists():

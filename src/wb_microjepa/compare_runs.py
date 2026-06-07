@@ -40,6 +40,14 @@ def load_microbrain_stats(run_dir: Path) -> Optional[pd.DataFrame]:
     return stats
 
 
+def load_action_delta_summary(run_dir: Path) -> Optional[pd.DataFrame]:
+    path = run_dir / "action_delta_summary.csv"
+    if not path.exists():
+        return None
+    df = pd.read_csv(path)
+    return df if not df.empty else None
+
+
 def summarize_run(run_dir: Path) -> Dict:
     summary: Dict = {"run": run_dir.name, "run_dir": str(run_dir)}
 
@@ -82,6 +90,13 @@ def summarize_run(run_dir: Path) -> Dict:
         summary["active_units_gt_0.3"] = int((activations > 0.3).sum())
         summary["dead_units_lt_0.05"] = int((activations < 0.05).sum())
         summary["top10_activation_share"] = float(activations.nlargest(max(1, len(activations) // 10)).sum() / max(activations.sum(), 1e-8))
+
+    action_delta = load_action_delta_summary(run_dir)
+    if action_delta is not None:
+        summary["mean_action_delta_norm"] = float(action_delta["action_delta_norm"].mean())
+        summary["mean_braingraph_delta_norm"] = float(action_delta["braingraph_delta_norm"].mean())
+        summary["mean_combined_delta_norm"] = float(action_delta["combined_delta_norm"].mean())
+        summary["mean_delta_cosine"] = float(action_delta["delta_cosine"].mean())
 
     return summary
 
@@ -129,6 +144,10 @@ def main():
         "std_probe_activation",
         "dead_units_lt_0.05",
         "top10_activation_share",
+        "mean_action_delta_norm",
+        "mean_braingraph_delta_norm",
+        "mean_combined_delta_norm",
+        "mean_delta_cosine",
     ] if c in df.columns]
 
     print(df[cols].sort_values(by=[c for c in ["eval_modulo_10_modulo_all_accuracy", "eval_number_line_train_range_accuracy", "latest_accuracy"] if c in df.columns], ascending=False).to_string(index=False))
