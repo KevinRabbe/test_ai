@@ -146,6 +146,16 @@ def _case_activation_contrast_loss(trace, state: torch.Tensor, action_id: torch.
     else:
         region_ids = region_ids.to(state.device)
 
+    selected_regions = lw.get("case_activation_contrast_regions")
+    selected_region_ids = None
+    if selected_regions:
+        selected_region_ids = {
+            int(region_id)
+            for region_name in selected_regions
+            for region_id, mapped_name in ID_TO_REGION.items()
+            if mapped_name == region_name
+        }
+
     world_names = [next(name for name, idx in WORLD_ID.items() if idx == int(w.item())) for w in world_id]
     actions = [ID_TO_ACTION[int(a.item())] for a in action_id]
     cases = [
@@ -158,10 +168,12 @@ def _case_activation_contrast_loss(trace, state: torch.Tensor, action_id: torch.
         zero = torch.tensor(0.0, device=state.device)
         return zero, zero
 
-    margin = float(lw.get("case_activation_contrast_margin", 0.03))
+    temperature = float(lw.get("case_activation_contrast_temperature", 0.2))
     losses = []
     spreads = []
     for region_id in sorted(set(region_ids.detach().cpu().tolist())):
+        if selected_region_ids is not None and int(region_id) not in selected_region_ids:
+            continue
         mask = region_ids == region_id
         if int(mask.sum().item()) == 0:
             continue
@@ -177,7 +189,12 @@ def _case_activation_contrast_loss(trace, state: torch.Tensor, action_id: torch.
         centroid_stack = torch.stack(centroids)
         spread = centroid_stack.max() - centroid_stack.min()
         spreads.append(spread)
-        losses.append(1.0 / (spread + margin + 1e-6))
+        pair_losses = []
+        for i in range(len(centroids)):
+            for j in range(i + 1, len(centroids)):
+                pair_losses.append(torch.exp(-torch.abs(centroids[i] - centroids[j]) / max(temperature, 1e-6)))
+        if pair_losses:
+            losses.append(torch.stack(pair_losses).mean())
 
     if not losses:
         zero = torch.tensor(0.0, device=state.device)

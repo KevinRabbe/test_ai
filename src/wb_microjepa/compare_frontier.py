@@ -161,6 +161,7 @@ def main() -> None:
         run_dirs = [Path(p) for p in args.run_dirs]
     else:
         run_dirs = [Path("runs") / name for name in [
+            "wb_microjepa_0m_braingraph_targeted_contrast",
             "wb_microjepa_0l_braingraph_specialization_loss",
             "wb_microjepa_0k_braingraph_soft_curriculum",
             "wb_microjepa_0j_braingraph_staged_curriculum",
