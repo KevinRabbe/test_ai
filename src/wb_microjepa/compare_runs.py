@@ -1,4 +1,5 @@
 import argparse
+import json
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
@@ -48,13 +49,41 @@ def load_action_delta_summary(run_dir: Path) -> Optional[pd.DataFrame]:
     return df if not df.empty else None
 
 
+def load_case_separation_summary(run_dir: Path) -> Optional[pd.DataFrame]:
+    path = run_dir / "case_region_separation.csv"
+    if not path.exists():
+        return None
+    df = pd.read_csv(path)
+    return df if not df.empty else None
+
+
+def load_config(run_dir: Path) -> Dict:
+    path = run_dir / "config_resolved.json"
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def summarize_run(run_dir: Path) -> Dict:
     summary: Dict = {"run": run_dir.name, "run_dir": str(run_dir)}
+
+    cfg = load_config(run_dir)
+    model_cfg = cfg.get("model", {})
+    training_cfg = cfg.get("training", {})
+    if "world_modulation_strength" in model_cfg:
+        summary["world_modulation_strength"] = float(model_cfg.get("world_modulation_strength", float("nan")))
+    if "action_delta_basis_weight" in model_cfg:
+        summary["action_delta_basis_weight"] = float(model_cfg.get("action_delta_basis_weight", float("nan")))
+    phases = training_cfg.get("curriculum_phases")
+    if isinstance(phases, list):
+        summary["curriculum_phase_count"] = int(len(phases))
 
     metrics = load_metrics(run_dir)
     if metrics is not None:
         summary["latest_epoch"] = int(metrics.get("epoch", 0))
         summary["latest_accuracy"] = float(metrics.get("accuracy", float("nan")))
+        if "curriculum_phase" in metrics:
+            summary["latest_curriculum_phase"] = str(metrics.get("curriculum_phase", ""))
         summary["latest_loss"] = float(metrics.get("loss", float("nan")))
         summary["latest_prediction_loss"] = float(metrics.get("prediction_loss", float("nan")))
         summary["latest_identity_loss"] = float(metrics.get("identity_loss", float("nan")))
@@ -72,11 +101,15 @@ def summarize_run(run_dir: Path) -> Dict:
             if "mean_absolute_error" in row:
                 summary[f"{prefix}_mae"] = float(row["mean_absolute_error"])
             if "classifier_accuracy" in row:
-                summary[f"{prefix}_classifier_accuracy"] = float(row["classifier_accuracy"])
+                classifier_accuracy = float(row["classifier_accuracy"])
+                summary[f"{prefix}_classifier_accuracy"] = classifier_accuracy
+                summary.setdefault(f"{prefix}_accuracy", classifier_accuracy)
             if "nearest_accuracy" in row:
                 summary[f"{prefix}_nearest_accuracy"] = float(row["nearest_accuracy"])
             if "classifier_mae" in row:
-                summary[f"{prefix}_classifier_mae"] = float(row["classifier_mae"])
+                classifier_mae = float(row["classifier_mae"])
+                summary[f"{prefix}_classifier_mae"] = classifier_mae
+                summary.setdefault(f"{prefix}_mae", classifier_mae)
             if "nearest_mae" in row:
                 summary[f"{prefix}_nearest_mae"] = float(row["nearest_mae"])
             summary[f"{prefix}_samples"] = int(row["samples"])
@@ -97,6 +130,13 @@ def summarize_run(run_dir: Path) -> Dict:
         summary["mean_braingraph_delta_norm"] = float(action_delta["braingraph_delta_norm"].mean())
         summary["mean_combined_delta_norm"] = float(action_delta["combined_delta_norm"].mean())
         summary["mean_delta_cosine"] = float(action_delta["delta_cosine"].mean())
+
+    case_sep = load_case_separation_summary(run_dir)
+    if case_sep is not None:
+        summary["mean_activation_range"] = float(case_sep["activation_range"].mean())
+        summary["max_activation_range"] = float(case_sep["activation_range"].max())
+        summary["mean_top_case_gap"] = float(case_sep["top_case_gap"].mean())
+        summary["max_top_case_gap"] = float(case_sep["top_case_gap"].max())
 
     return summary
 
@@ -131,16 +171,30 @@ def main():
     df = pd.DataFrame(rows)
     cols = [c for c in [
         "run",
+        "world_modulation_strength",
+        "action_delta_basis_weight",
+        "curriculum_phase_count",
         "latest_epoch",
         "latest_accuracy",
+        "latest_curriculum_phase",
         "latest_loss",
         "eval_number_line_train_range_accuracy",
         "eval_number_line_heldout_range_accuracy",
+        "eval_number_line_train_range_classifier_accuracy",
+        "eval_number_line_heldout_range_classifier_accuracy",
         "eval_modulo_10_modulo_all_accuracy",
+        "eval_modulo_10_modulo_all_classifier_accuracy",
         "latest_delta_consistency_loss",
         "eval_number_line_train_range_mae",
         "eval_number_line_heldout_range_mae",
+        "eval_number_line_train_range_classifier_mae",
+        "eval_number_line_heldout_range_classifier_mae",
         "eval_modulo_10_modulo_all_mae",
+        "eval_modulo_10_modulo_all_classifier_mae",
+        "mean_activation_range",
+        "max_activation_range",
+        "mean_top_case_gap",
+        "max_top_case_gap",
         "std_probe_activation",
         "dead_units_lt_0.05",
         "top10_activation_share",
@@ -150,7 +204,8 @@ def main():
         "mean_delta_cosine",
     ] if c in df.columns]
 
-    print(df[cols].sort_values(by=[c for c in ["eval_modulo_10_modulo_all_accuracy", "eval_number_line_train_range_accuracy", "latest_accuracy"] if c in df.columns], ascending=False).to_string(index=False))
+    sort_cols = [c for c in ["eval_modulo_10_modulo_all_accuracy", "eval_number_line_train_range_accuracy", "mean_activation_range", "latest_accuracy"] if c in df.columns]
+    print(df[cols].sort_values(by=sort_cols, ascending=False).to_string(index=False))
 
     if args.output:
         out = Path(args.output)

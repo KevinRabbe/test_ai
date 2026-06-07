@@ -294,6 +294,7 @@ def train(config_path: str):
         actions=cfg["worlds"]["actions"],
         modulo_n=cfg["worlds"]["modulo_n"],
         train_ranges=cfg["worlds"].get("train_ranges"),
+        curriculum_phases=cfg["training"].get("curriculum_phases"),
     )
 
     model = build_model(cfg).to(device)
@@ -309,7 +310,7 @@ def train(config_path: str):
     batch_size = int(cfg["training"]["batch_size"])
 
     for epoch in range(1, epochs + 1):
-        batch = sampler.sample_batch(batch_size)
+        batch = sampler.sample_batch(batch_size, epoch=epoch)
         tb = batch_to_tensors(batch, device)
 
         opt.zero_grad(set_to_none=True)
@@ -322,7 +323,7 @@ def train(config_path: str):
         acc = (pred == tb["target"]).float().mean().item()
 
         if epoch % cfg["training"]["log_every_epochs"] == 0 or epoch == 1:
-            row = {"epoch": epoch, "accuracy": acc, **loss_parts}
+            row = {"epoch": epoch, "accuracy": acc, "curriculum_phase": batch["curriculum_phase"][0], **loss_parts}
             logger.log_metrics(row)
             print(f"epoch={epoch:04d} loss={loss_parts['loss']:.4f} acc={acc:.3f}")
 

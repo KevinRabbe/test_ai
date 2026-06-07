@@ -1,0 +1,146 @@
+run:
+  name: wb_microjepa_0j_braingraph_staged_curriculum
+  seed: 42
+  deterministic: true
+  clear_output: true
+  output_dir: runs
+
+worlds:
+  train_worlds:
+    - number_line
+    - modulo_10
+  max_number: 100
+  train_max_number: 60
+  train_ranges:
+    - [0, 20]
+    - [40, 60]
+  heldout_ranges:
+    - [21, 39]
+    - [61, 100]
+  actions: [-3, -2, -1, 1, 2, 3]
+  modulo_n: 10
+
+model:
+  type: brain_graph_microjepa
+  num_worlds: 2
+  num_numbers: 101
+  num_actions: 6
+  num_microbrains: 128
+  embedding_dim: 32
+  action_dim: 16
+  world_dim: 8
+  hidden_dim: 64
+  adapter_dim: 8
+  top_k_microbrains: 32
+  use_world_modulation: true
+  world_modulation_strength: 0.25
+  use_action_delta_basis: true
+  action_delta_basis_weight: 0.5
+
+topology:
+  type: brain_graph_3d
+  seed: 42
+  grid:
+    x: 18
+    y: 14
+    z: 10
+  regions:
+    cortex: 96
+    thalamus: 8
+    hippocampus: 8
+    basal_ganglia: 4
+    cerebellum: 8
+    brainstem: 4
+  local_radius: 0.34
+  max_neighbors: 8
+  message_passing_steps: 1
+
+training:
+  epochs: 200
+  batch_size: 256
+  learning_rate: 0.0003
+  weight_decay: 0.01
+  log_every_epochs: 10
+  probe_every_epochs: 10
+  device: auto
+  curriculum_phases:
+    - name: phase_1_number_line
+      start_epoch: 1
+      end_epoch: 80
+      world_weights:
+        number_line: 1.0
+        modulo_10: 0.0
+      number_line_ranges:
+        - [0, 20]
+        - [40, 60]
+      number_line_range_weights:
+        - 1.0
+        - 1.0
+      action_weights:
+        "-3": 1.0
+        "-2": 1.0
+        "-1": 1.0
+        "1": 1.0
+        "2": 1.0
+        "3": 1.0
+    - name: phase_2_balanced
+      start_epoch: 81
+      end_epoch: 140
+      world_weights:
+        number_line: 0.5
+        modulo_10: 0.5
+      number_line_ranges:
+        - [0, 20]
+        - [40, 60]
+      number_line_range_weights:
+        - 1.0
+        - 1.0
+      modulo_state_ranges:
+        - [0, 9]
+      modulo_state_range_weights:
+        - 1.0
+      action_weights:
+        "-3": 1.0
+        "-2": 1.0
+        "-1": 1.0
+        "1": 1.0
+        "2": 1.0
+        "3": 1.0
+    - name: phase_3_mixed_replay
+      start_epoch: 141
+      end_epoch: 200
+      world_weights:
+        number_line: 0.5
+        modulo_10: 0.5
+      number_line_ranges:
+        - [0, 20]
+        - [40, 60]
+        - [19, 21]
+        - [39, 41]
+        - [59, 61]
+      number_line_range_weights:
+        - 1.0
+        - 1.0
+        - 2.0
+        - 2.0
+        - 2.0
+      modulo_state_ranges:
+        - [0, 1]
+        - [8, 9]
+      modulo_state_range_weights:
+        - 2.0
+        - 2.0
+      action_weights:
+        "-3": 1.5
+        "-2": 1.0
+        "-1": 1.0
+        "1": 1.0
+        "2": 1.0
+        "3": 1.5
+
+loss:
+  prediction_weight: 1.0
+  identity_weight: 0.5
+  sparsity_weight: 0.001
+  diversity_weight: 0.001
+  delta_consistency_weight: 0.1

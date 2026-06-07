@@ -45,21 +45,38 @@ class NumberLineWorld:
         target = state + action
         return self.min_number <= state <= self.max_number and self.min_number <= target <= self.max_number
 
-    def _sample_state_from_ranges(self, ranges: Sequence[Tuple[int, int]]) -> int:
-        expanded: List[int] = []
-        for start, end in ranges:
-            expanded.extend(list(range(int(start), int(end) + 1)))
-        if not expanded:
-            raise ValueError("NumberLineWorld received empty train_ranges.")
-        return random.choice(expanded)
+    def _sample_state_from_ranges(self, ranges: Sequence[Tuple[int, int]], weights: Optional[Sequence[float]] = None) -> int:
+        if not ranges:
+            raise ValueError("NumberLineWorld received empty ranges.")
+        idx = random.choices(range(len(ranges)), weights=weights if weights is not None else None, k=1)[0]
+        start, end = ranges[idx]
+        return random.randint(int(start), int(end))
 
-    def sample(self, actions: List[int], train_max_number: int, train_ranges: Optional[Sequence[Tuple[int, int]]] = None) -> Transition:
+    def _sample_action(self, actions: List[int], action_weights: Optional[Dict[int, float]] = None) -> int:
+        if action_weights:
+            normalized = {int(k): float(v) for k, v in action_weights.items()}
+            weights = [float(normalized.get(action, 0.0)) for action in actions]
+            if sum(weights) > 0:
+                return random.choices(actions, weights=weights, k=1)[0]
+        return random.choice(actions)
+
+    def sample(
+        self,
+        actions: List[int],
+        train_max_number: int,
+        train_ranges: Optional[Sequence[Tuple[int, int]]] = None,
+        state_ranges: Optional[Sequence[Tuple[int, int]]] = None,
+        state_range_weights: Optional[Sequence[float]] = None,
+        action_weights: Optional[Dict[int, float]] = None,
+    ) -> Transition:
         while True:
-            if train_ranges:
+            if state_ranges:
+                state = self._sample_state_from_ranges(state_ranges, state_range_weights)
+            elif train_ranges:
                 state = self._sample_state_from_ranges(train_ranges)
             else:
                 state = random.randint(self.min_number, train_max_number)
-            action = random.choice(actions)
+            action = self._sample_action(actions, action_weights)
             if self.valid(state, action):
                 target = self.step(state, action)
                 return Transition(self.name, WORLD_ID[self.name], state, action, ACTION_TO_ID[action], target)
@@ -76,20 +93,47 @@ class ModuloWorld:
     def valid(self, state: int, action: int) -> bool:
         return 0 <= state < self.modulo_n
 
-    def sample(self, actions: List[int], train_max_number: int, train_ranges: Optional[Sequence[Tuple[int, int]]] = None) -> Transition:
+    def _sample_state_from_ranges(self, ranges: Sequence[Tuple[int, int]], weights: Optional[Sequence[float]] = None) -> int:
+        if not ranges:
+            raise ValueError("ModuloWorld received empty ranges.")
+        idx = random.choices(range(len(ranges)), weights=weights if weights is not None else None, k=1)[0]
+        start, end = ranges[idx]
+        return random.randint(max(0, int(start)), min(self.modulo_n - 1, int(end)))
+
+    def _sample_action(self, actions: List[int], action_weights: Optional[Dict[int, float]] = None) -> int:
+        if action_weights:
+            normalized = {int(k): float(v) for k, v in action_weights.items()}
+            weights = [float(normalized.get(action, 0.0)) for action in actions]
+            if sum(weights) > 0:
+                return random.choices(actions, weights=weights, k=1)[0]
+        return random.choice(actions)
+
+    def sample(
+        self,
+        actions: List[int],
+        train_max_number: int,
+        train_ranges: Optional[Sequence[Tuple[int, int]]] = None,
+        state_ranges: Optional[Sequence[Tuple[int, int]]] = None,
+        state_range_weights: Optional[Sequence[float]] = None,
+        action_weights: Optional[Dict[int, float]] = None,
+    ) -> Transition:
         del train_max_number
         del train_ranges
-        state = random.randint(0, self.modulo_n - 1)
-        action = random.choice(actions)
+        if state_ranges:
+            state = self._sample_state_from_ranges(state_ranges, state_range_weights)
+        else:
+            state = random.randint(0, self.modulo_n - 1)
+        action = self._sample_action(actions, action_weights)
         target = self.step(state, action)
         return Transition("modulo_10", WORLD_ID["modulo_10"], state, action, ACTION_TO_ID[action], target)
 
 
 class MixedWorldSampler:
-    def __init__(self, world_names: List[str], max_number: int, train_max_number: int, actions: List[int], modulo_n: int, train_ranges: Optional[List[List[int]]] = None):
+    def __init__(self, world_names: List[str], max_number: int, train_max_number: int, actions: List[int], modulo_n: int, train_ranges: Optional[List[List[int]]] = None, curriculum_phases: Optional[List[Dict]] = None):
         self.actions = actions
         self.train_max_number = train_max_number
         self.train_ranges = [tuple(r) for r in train_ranges] if train_ranges else None
+        self.curriculum_phases = curriculum_phases or []
         self.worlds = []
         for name in world_names:
             if name == "number_line":
@@ -99,9 +143,22 @@ class MixedWorldSampler:
             else:
                 raise ValueError(f"Unknown world: {name}")
 
-    def sample_batch(self, batch_size: int) -> Dict[str, List[int]]:
+    def _phase_for_epoch(self, epoch: Optional[int]) -> Optional[Dict]:
+        if epoch is None or not self.curriculum_phases:
+            return None
+        for phase in self.curriculum_phases:
+            if int(phase.get("start_epoch", 1)) <= epoch <= int(phase.get("end_epoch", epoch)):
+                return phase
+        return self.curriculum_phases[-1]
+
+    def current_phase_name(self, epoch: Optional[int]) -> str:
+        phase = self._phase_for_epoch(epoch)
+        return str(phase.get("name", "default")) if phase else "default"
+
+    def sample_batch(self, batch_size: int, epoch: Optional[int] = None) -> Dict[str, List[int]]:
+        phase = self._phase_for_epoch(epoch)
         transitions = [
-            random.choice(self.worlds).sample(self.actions, self.train_max_number, self.train_ranges)
+            self._sample_transition(phase)
             for _ in range(batch_size)
         ]
         return {
@@ -111,7 +168,45 @@ class MixedWorldSampler:
             "target": [t.target for t in transitions],
             "action_value": [t.action for t in transitions],
             "world_name": [t.world_name for t in transitions],
+            "curriculum_phase": [self.current_phase_name(epoch)] * batch_size,
         }
+
+    def _sample_transition(self, phase: Optional[Dict]) -> Transition:
+        phase = phase or {}
+        world_weights = phase.get("world_weights")
+        if world_weights:
+            worlds = [w for w in self.worlds if w.name in world_weights and float(world_weights.get(w.name, 0.0)) > 0.0]
+            if not worlds:
+                worlds = self.worlds
+            selected_world = random.choices(worlds, weights=[float(world_weights.get(w.name, 0.0)) for w in worlds], k=1)[0]
+        else:
+            selected_world = random.choice(self.worlds)
+
+        number_line_ranges = phase.get("number_line_ranges")
+        number_line_range_weights = phase.get("number_line_range_weights")
+        modulo_state_ranges = phase.get("modulo_state_ranges")
+        modulo_state_range_weights = phase.get("modulo_state_range_weights")
+        action_weights = phase.get("action_weights")
+
+        if selected_world.name == "number_line":
+            return selected_world.sample(
+                self.actions,
+                self.train_max_number,
+                self.train_ranges,
+                state_ranges=[tuple(r) for r in number_line_ranges] if number_line_ranges else self.train_ranges,
+                state_range_weights=number_line_range_weights,
+                action_weights=action_weights,
+            )
+        if selected_world.name == "modulo_10":
+            return selected_world.sample(
+                self.actions,
+                self.train_max_number,
+                self.train_ranges,
+                state_ranges=[tuple(r) for r in modulo_state_ranges] if modulo_state_ranges else None,
+                state_range_weights=modulo_state_range_weights,
+                action_weights=action_weights,
+            )
+        raise ValueError(f"Unknown world selected: {selected_world.name}")
 
 
 def fixed_probe_set() -> List[Transition]:

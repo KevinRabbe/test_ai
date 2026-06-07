@@ -82,6 +82,12 @@ python -m src.wb_microjepa.compare_runs
 python -m src.wb_microjepa.analyze_cases runs/wb_microjepa_0b_braingraph_train_numeric_ae
 ```
 
+## Staged curriculum frontier
+
+```powershell
+./scripts/run_braingraph_staged_curriculum.ps1
+```
+
 ## World modulation sweep
 
 ```powershell
