@@ -20,6 +20,16 @@ def load_csv(path: Path) -> Optional[pd.DataFrame]:
     return df if not df.empty else None
 
 
+def load_metrics(run_dir: Path) -> Optional[pd.Series]:
+    path = run_dir / "metrics.csv"
+    if not path.exists():
+        return None
+    df = pd.read_csv(path)
+    if df.empty:
+        return None
+    return df.iloc[-1]
+
+
 def weighted_mean(df: pd.DataFrame, value_col: str, weight_col: str = "samples") -> float:
     if df.empty or value_col not in df.columns:
         return float("nan")
@@ -110,6 +120,15 @@ def summarize_run(run_dir: Path) -> Dict[str, float]:
         "world_modulation_strength": float(model_cfg.get("world_modulation_strength", float("nan"))),
         "action_delta_basis_weight": float(model_cfg.get("action_delta_basis_weight", float("nan"))),
     }
+
+    metrics = load_metrics(run_dir)
+    if metrics is not None:
+        row["latest_epoch"] = int(metrics.get("epoch", 0))
+        row["latest_accuracy"] = float(metrics.get("accuracy", float("nan")))
+        row["latest_loss"] = float(metrics.get("loss", float("nan")))
+        row["latest_case_activation_contrast_loss"] = float(metrics.get("case_activation_contrast_loss", float("nan")))
+        row["latest_case_activation_spread_mean"] = float(metrics.get("case_activation_spread_mean", float("nan")))
+
     row.update(summarize_evaluation(run_dir))
     row.update(summarize_case_separation(run_dir))
 
@@ -142,6 +161,8 @@ def main() -> None:
         run_dirs = [Path(p) for p in args.run_dirs]
     else:
         run_dirs = [Path("runs") / name for name in [
+            "wb_microjepa_0l_braingraph_specialization_loss",
+            "wb_microjepa_0k_braingraph_soft_curriculum",
             "wb_microjepa_0j_braingraph_staged_curriculum",
             "wb_microjepa_0c_braingraph_delta",
             "wb_microjepa_0e_braingraph_worldmod_s025",
@@ -159,6 +180,9 @@ def main() -> None:
         "run_name",
         "world_modulation_strength",
         "action_delta_basis_weight",
+        "latest_epoch",
+        "latest_accuracy",
+        "latest_loss",
         "modulo_accuracy",
         "number_line_train_accuracy",
         "number_line_heldout_accuracy",
@@ -166,6 +190,8 @@ def main() -> None:
         "mean_activation_range",
         "max_activation_range",
         "mean_top_case_gap",
+        "latest_case_activation_contrast_loss",
+        "latest_case_activation_spread_mean",
         "passes_rule",
     ]
     cols = [c for c in cols if c in df.columns]

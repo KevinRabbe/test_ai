@@ -10,7 +10,7 @@ import torch
 import torch.nn.functional as F
 
 from .determinism import set_deterministic
-from .worlds import MixedWorldSampler, fixed_probe_set
+from .worlds import MixedWorldSampler, fixed_probe_set, WORLD_ID, ID_TO_ACTION
 from .models import WBMICROJEPA
 from .brain_models import BrainGraphMicroJEPA
 from .monitoring import DiagnosticsLogger
@@ -96,11 +96,102 @@ def _delta_consistency_loss(model, trace, state: torch.Tensor, target: torch.Ten
     return F.mse_loss(predicted_delta, delta_target)
 
 
-def compute_losses(model, logits, trace, state, target, cfg):
+def _case_type_for_sample(world_name: str, state: int, action: int, target: int, cfg: Dict) -> str:
+    if world_name == "number_line":
+        worlds = cfg.get("worlds", {})
+        train_ranges = worlds.get("train_ranges")
+        heldout_ranges = worlds.get("heldout_ranges")
+        if train_ranges and heldout_ranges:
+            train_ranges = [tuple(r) for r in train_ranges]
+            heldout_ranges = [tuple(r) for r in heldout_ranges]
+            if train_ranges[0][0] <= state <= train_ranges[0][1]:
+                return "range_train_low"
+            if len(train_ranges) > 1 and train_ranges[1][0] <= state <= train_ranges[1][1]:
+                return "range_train_high"
+            if heldout_ranges[0][0] <= state <= heldout_ranges[0][1]:
+                return "range_heldout_gap"
+            if len(heldout_ranges) > 1 and heldout_ranges[1][0] <= state <= heldout_ranges[1][1]:
+                return "range_heldout_extrap"
+            return "range_unknown"
+        train_max = int(worlds["train_max_number"])
+        return "normal_small" if state <= train_max else "normal_heldout"
+
+    if world_name == "modulo_10":
+        modulo_n = int(cfg["worlds"]["modulo_n"])
+        raw = state + action
+        if raw < 0:
+            return "modulo_negative_wrap"
+        if raw >= modulo_n:
+            return "modulo_positive_wrap"
+        return "modulo_no_wrap"
+
+    return "unknown"
+
+
+def _case_activation_contrast_loss(trace, state: torch.Tensor, action_id: torch.Tensor, world_id: torch.Tensor, target: torch.Tensor, cfg: Dict):
+    lw = cfg["loss"]
+    weight = float(lw.get("case_activation_contrast_weight", 0.0))
+    if weight <= 0.0:
+        zero = torch.tensor(0.0, device=state.device)
+        return zero, zero
+
+    activations = trace.get("activations")
+    region_ids = trace.get("region_ids")
+    if activations is None or region_ids is None:
+        zero = torch.tensor(0.0, device=state.device)
+        return zero, zero
+
+    if not isinstance(region_ids, torch.Tensor):
+        region_ids = torch.tensor(region_ids, device=state.device)
+    else:
+        region_ids = region_ids.to(state.device)
+
+    world_names = [next(name for name, idx in WORLD_ID.items() if idx == int(w.item())) for w in world_id]
+    actions = [ID_TO_ACTION[int(a.item())] for a in action_id]
+    cases = [
+        _case_type_for_sample(world_name, int(s.item()), action, int(t.item()), cfg)
+        for world_name, s, action, t in zip(world_names, state, actions, target)
+    ]
+
+    unique_cases = sorted(set(cases))
+    if len(unique_cases) < 2:
+        zero = torch.tensor(0.0, device=state.device)
+        return zero, zero
+
+    margin = float(lw.get("case_activation_contrast_margin", 0.03))
+    losses = []
+    spreads = []
+    for region_id in sorted(set(region_ids.detach().cpu().tolist())):
+        mask = region_ids == region_id
+        if int(mask.sum().item()) == 0:
+            continue
+        region_scores = activations[:, mask].mean(dim=1)
+        centroids = []
+        for case in unique_cases:
+            case_mask = torch.tensor([c == case for c in cases], dtype=torch.bool, device=state.device)
+            if int(case_mask.sum().item()) == 0:
+                continue
+            centroids.append(region_scores[case_mask].mean())
+        if len(centroids) < 2:
+            continue
+        centroid_stack = torch.stack(centroids)
+        spread = centroid_stack.max() - centroid_stack.min()
+        spreads.append(spread)
+        losses.append(1.0 / (spread + margin + 1e-6))
+
+    if not losses:
+        zero = torch.tensor(0.0, device=state.device)
+        return zero, zero
+
+    return torch.stack(losses).mean(), torch.stack(spreads).mean()
+
+
+def compute_losses(model, logits, trace, state, action_id, world_id, target, cfg):
     device = logits.device
     target_emb = model.encode_state(target).detach()
     pred_emb = trace["predicted_target_embedding"]
     delta_loss = _delta_consistency_loss(model, trace, state, target, cfg)
+    case_contrast_loss, case_spread_mean = _case_activation_contrast_loss(trace, state, action_id, world_id, target, cfg)
 
     prediction_loss = F.mse_loss(pred_emb, target_emb)
     identity_loss = F.cross_entropy(logits, target)
@@ -145,6 +236,7 @@ def compute_losses(model, logits, trace, state, target, cfg):
         + lw["sparsity_weight"] * sparsity_loss
         + lw["diversity_weight"] * diversity_loss
         + float(lw.get("delta_consistency_weight", 0.0)) * delta_loss
+        + float(lw.get("case_activation_contrast_weight", 0.0)) * case_contrast_loss
         + float(lw.get("decoder_autoencode_weight", 0.0)) * decoder_autoencode_loss
         + float(lw.get("state_smoothness_weight", 0.0)) * state_smoothness_loss
     )
@@ -155,6 +247,8 @@ def compute_losses(model, logits, trace, state, target, cfg):
         "sparsity_loss": float(sparsity_loss.detach().cpu()),
         "diversity_loss": float(diversity_loss.detach().cpu()),
         "delta_consistency_loss": float(delta_loss.detach().cpu()),
+        "case_activation_contrast_loss": float(case_contrast_loss.detach().cpu()),
+        "case_activation_spread_mean": float(case_spread_mean.detach().cpu()),
         "decoder_autoencode_loss": float(decoder_autoencode_loss.detach().cpu()),
         "state_smoothness_loss": float(state_smoothness_loss.detach().cpu()),
         "action_delta_norm": float(action_delta_norm.detach().cpu()),
@@ -316,7 +410,7 @@ def train(config_path: str):
 
         opt.zero_grad(set_to_none=True)
         logits, trace = model(tb["state"], tb["action_id"], tb["world_id"])
-        loss, loss_parts = compute_losses(model, logits, trace, tb["state"], tb["target"], cfg)
+        loss, loss_parts = compute_losses(model, logits, trace, tb["state"], tb["action_id"], tb["world_id"], tb["target"], cfg)
         loss.backward()
         opt.step()
 

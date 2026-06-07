@@ -1,0 +1,203 @@
+run:
+  name: wb_microjepa_0l_braingraph_specialization_loss_smoke
+  seed: 42
+  deterministic: true
+  clear_output: true
+  output_dir: runs
+
+worlds:
+  train_worlds:
+    - number_line
+    - modulo_10
+  max_number: 100
+  train_max_number: 60
+  train_ranges:
+    - [0, 20]
+    - [40, 60]
+  heldout_ranges:
+    - [21, 39]
+    - [61, 100]
+  actions: [-3, -2, -1, 1, 2, 3]
+  modulo_n: 10
+
+model:
+  type: brain_graph_microjepa
+  num_worlds: 2
+  num_numbers: 101
+  num_actions: 6
+  num_microbrains: 128
+  embedding_dim: 32
+  action_dim: 16
+  world_dim: 8
+  hidden_dim: 64
+  adapter_dim: 8
+  top_k_microbrains: 32
+  use_world_modulation: true
+  world_modulation_strength: 0.25
+  use_action_delta_basis: true
+  action_delta_basis_weight: 0.5
+
+topology:
+  type: brain_graph_3d
+  seed: 42
+  grid:
+    x: 18
+    y: 14
+    z: 10
+  regions:
+    cortex: 96
+    thalamus: 8
+    hippocampus: 8
+    basal_ganglia: 4
+    cerebellum: 8
+    brainstem: 4
+  local_radius: 0.34
+  max_neighbors: 8
+  message_passing_steps: 1
+
+training:
+  epochs: 12
+  batch_size: 64
+  learning_rate: 0.0003
+  weight_decay: 0.01
+  log_every_epochs: 4
+  probe_every_epochs: 4
+  device: auto
+  curriculum_schedule:
+    - epoch: 1
+      name: early_mixed
+      world_weights:
+        number_line: 0.75
+        modulo_10: 0.25
+      number_line_ranges:
+        - [0, 20]
+        - [40, 60]
+        - [19, 21]
+        - [39, 41]
+        - [59, 61]
+      number_line_range_weights:
+        - 2.0
+        - 2.0
+        - 0.6
+        - 0.6
+        - 0.6
+      modulo_state_ranges:
+        - [0, 1]
+        - [2, 7]
+        - [8, 9]
+      modulo_state_range_weights:
+        - 1.6
+        - 0.8
+        - 1.6
+      action_weights:
+        "-3": 1.0
+        "-2": 1.0
+        "-1": 1.0
+        "1": 1.0
+        "2": 1.0
+        "3": 1.0
+    - epoch: 5
+      name: mid_mixed
+      world_weights:
+        number_line: 0.70
+        modulo_10: 0.30
+      number_line_ranges:
+        - [0, 20]
+        - [40, 60]
+        - [19, 21]
+        - [39, 41]
+        - [59, 61]
+      number_line_range_weights:
+        - 1.5
+        - 1.5
+        - 1.2
+        - 1.2
+        - 1.2
+      modulo_state_ranges:
+        - [0, 1]
+        - [2, 7]
+        - [8, 9]
+      modulo_state_range_weights:
+        - 1.3
+        - 1.0
+        - 1.3
+      action_weights:
+        "-3": 1.2
+        "-2": 1.0
+        "-1": 1.0
+        "1": 1.0
+        "2": 1.0
+        "3": 1.2
+    - epoch: 9
+      name: late_mixed
+      world_weights:
+        number_line: 0.60
+        modulo_10: 0.40
+      number_line_ranges:
+        - [0, 20]
+        - [40, 60]
+        - [19, 21]
+        - [39, 41]
+        - [59, 61]
+      number_line_range_weights:
+        - 1.0
+        - 1.0
+        - 1.8
+        - 1.8
+        - 1.8
+      modulo_state_ranges:
+        - [0, 1]
+        - [2, 7]
+        - [8, 9]
+      modulo_state_range_weights:
+        - 1.4
+        - 0.8
+        - 1.4
+      action_weights:
+        "-3": 1.5
+        "-2": 1.0
+        "-1": 1.0
+        "1": 1.0
+        "2": 1.0
+        "3": 1.5
+    - epoch: 12
+      name: late_mixed
+      world_weights:
+        number_line: 0.60
+        modulo_10: 0.40
+      number_line_ranges:
+        - [0, 20]
+        - [40, 60]
+        - [19, 21]
+        - [39, 41]
+        - [59, 61]
+      number_line_range_weights:
+        - 1.0
+        - 1.0
+        - 1.8
+        - 1.8
+        - 1.8
+      modulo_state_ranges:
+        - [0, 1]
+        - [2, 7]
+        - [8, 9]
+      modulo_state_range_weights:
+        - 1.4
+        - 0.8
+        - 1.4
+      action_weights:
+        "-3": 1.5
+        "-2": 1.0
+        "-1": 1.0
+        "1": 1.0
+        "2": 1.0
+        "3": 1.5
+
+loss:
+  prediction_weight: 1.0
+  identity_weight: 0.5
+  sparsity_weight: 0.001
+  diversity_weight: 0.001
+  delta_consistency_weight: 0.1
+  case_activation_contrast_weight: 0.01
+  case_activation_contrast_margin: 0.03

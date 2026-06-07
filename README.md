@@ -94,6 +94,12 @@ python -m src.wb_microjepa.analyze_cases runs/wb_microjepa_0b_braingraph_train_n
 ./scripts/run_braingraph_soft_curriculum.ps1
 ```
 
+## Specialization loss frontier
+
+```powershell
+./scripts/run_braingraph_specialization_loss.ps1
+```
+
 ## World modulation sweep
 
 ```powershell
