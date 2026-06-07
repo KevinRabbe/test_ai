@@ -1,5 +1,6 @@
 import argparse
 import json
+import shutil
 from pathlib import Path
 from typing import Dict
 import yaml
@@ -159,14 +160,22 @@ def run_probes(model, device, logger: DiagnosticsLogger, epoch: int):
     model.train()
 
 
+def prepare_run_dir(cfg: Dict) -> Path:
+    run_dir = Path(cfg["run"]["output_dir"]) / cfg["run"]["name"]
+    clear_output = bool(cfg.get("run", {}).get("clear_output", True))
+    if clear_output and run_dir.exists():
+        shutil.rmtree(run_dir)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "checkpoints").mkdir(exist_ok=True)
+    return run_dir
+
+
 def train(config_path: str):
     cfg = load_config(config_path)
     set_deterministic(cfg["run"]["seed"], cfg["run"]["deterministic"])
     device = choose_device(cfg)
 
-    run_dir = Path(cfg["run"]["output_dir"]) / cfg["run"]["name"]
-    run_dir.mkdir(parents=True, exist_ok=True)
-    (run_dir / "checkpoints").mkdir(exist_ok=True)
+    run_dir = prepare_run_dir(cfg)
 
     with (run_dir / "config_resolved.json").open("w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2)
