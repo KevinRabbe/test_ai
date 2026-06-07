@@ -82,6 +82,12 @@ python -m src.wb_microjepa.compare_runs
 python -m src.wb_microjepa.analyze_cases runs/wb_microjepa_0b_braingraph_train_numeric_ae
 ```
 
+## World modulation sweep
+
+```powershell
+./scripts/run_braingraph_worldmod_sweep.ps1
+```
+
 ## Windows one-shot run
 
 ```powershell
