@@ -45,6 +45,7 @@ class DenseJEPA(nn.Module):
 
         trace = {
             "state_embedding": state_emb.detach(),
+            "predicted_delta": delta,
             "predicted_target_embedding": predicted_target_emb.detach(),
             "decoded_prediction": decoded.detach(),
             "baseline": "dense_jepa",

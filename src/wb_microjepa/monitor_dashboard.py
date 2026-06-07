@@ -114,7 +114,8 @@ def render_overview(run_dir: Path, metrics: Optional[pd.DataFrame], evaluation: 
 
     if metrics is not None:
         st.subheader("Training metrics")
-        st.line_chart(metrics.set_index("epoch")[["accuracy", "loss", "prediction_loss", "identity_loss"]])
+        metric_cols = [c for c in ["accuracy", "loss", "prediction_loss", "delta_consistency_loss", "identity_loss"] if c in metrics.columns]
+        st.line_chart(metrics.set_index("epoch")[metric_cols])
 
     if evaluation is not None:
         st.subheader("Evaluation summary")

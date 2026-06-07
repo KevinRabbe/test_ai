@@ -135,6 +135,7 @@ class WBMICROJEPA(nn.Module):
         decoded = logits.argmax(dim=-1)
 
         trace["state_embedding"] = state_emb.detach()
+        trace["predicted_delta"] = delta
         trace["predicted_target_embedding"] = predicted_target_emb.detach()
         trace["decoded_prediction"] = decoded.detach()
         return logits, trace

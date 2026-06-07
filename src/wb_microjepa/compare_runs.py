@@ -50,6 +50,7 @@ def summarize_run(run_dir: Path) -> Dict:
         summary["latest_loss"] = float(metrics.get("loss", float("nan")))
         summary["latest_prediction_loss"] = float(metrics.get("prediction_loss", float("nan")))
         summary["latest_identity_loss"] = float(metrics.get("identity_loss", float("nan")))
+        summary["latest_delta_consistency_loss"] = float(metrics.get("delta_consistency_loss", float("nan")))
 
     evaluation = load_evaluation(run_dir)
     if evaluation is not None:
@@ -121,6 +122,7 @@ def main():
         "eval_number_line_train_range_accuracy",
         "eval_number_line_heldout_range_accuracy",
         "eval_modulo_10_modulo_all_accuracy",
+        "latest_delta_consistency_loss",
         "eval_number_line_train_range_mae",
         "eval_number_line_heldout_range_mae",
         "eval_modulo_10_modulo_all_mae",

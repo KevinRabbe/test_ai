@@ -81,10 +81,26 @@ def _state_smoothness_loss(model, cfg: Dict, device: torch.device) -> torch.Tens
     return (second_diff ** 2).mean()
 
 
-def compute_losses(model, logits, trace, target, cfg):
+def _delta_consistency_loss(model, trace, state: torch.Tensor, target: torch.Tensor, cfg: Dict) -> torch.Tensor:
+    lw = cfg["loss"]
+    weight = float(lw.get("delta_consistency_weight", 0.0))
+    if weight <= 0.0:
+        return torch.tensor(0.0, device=target.device)
+
+    state_emb = model.encode_state(state)
+    target_emb = model.encode_state(target).detach()
+    delta_target = (target_emb - state_emb).detach()
+    predicted_delta = trace.get("predicted_delta")
+    if predicted_delta is None:
+        predicted_delta = trace["predicted_target_embedding"] - state_emb
+    return F.mse_loss(predicted_delta, delta_target)
+
+
+def compute_losses(model, logits, trace, state, target, cfg):
     device = logits.device
     target_emb = model.encode_state(target).detach()
     pred_emb = trace["predicted_target_embedding"]
+    delta_loss = _delta_consistency_loss(model, trace, state, target, cfg)
 
     prediction_loss = F.mse_loss(pred_emb, target_emb)
     identity_loss = F.cross_entropy(logits, target)
@@ -110,6 +126,7 @@ def compute_losses(model, logits, trace, target, cfg):
         + lw["identity_weight"] * identity_loss
         + lw["sparsity_weight"] * sparsity_loss
         + lw["diversity_weight"] * diversity_loss
+        + float(lw.get("delta_consistency_weight", 0.0)) * delta_loss
         + float(lw.get("decoder_autoencode_weight", 0.0)) * decoder_autoencode_loss
         + float(lw.get("state_smoothness_weight", 0.0)) * state_smoothness_loss
     )
@@ -119,6 +136,7 @@ def compute_losses(model, logits, trace, target, cfg):
         "identity_loss": float(identity_loss.detach().cpu()),
         "sparsity_loss": float(sparsity_loss.detach().cpu()),
         "diversity_loss": float(diversity_loss.detach().cpu()),
+        "delta_consistency_loss": float(delta_loss.detach().cpu()),
         "decoder_autoencode_loss": float(decoder_autoencode_loss.detach().cpu()),
         "state_smoothness_loss": float(state_smoothness_loss.detach().cpu()),
     }
@@ -250,7 +268,7 @@ def train(config_path: str):
 
         opt.zero_grad(set_to_none=True)
         logits, trace = model(tb["state"], tb["action_id"], tb["world_id"])
-        loss, loss_parts = compute_losses(model, logits, trace, tb["target"], cfg)
+        loss, loss_parts = compute_losses(model, logits, trace, tb["state"], tb["target"], cfg)
         loss.backward()
         opt.step()
 
