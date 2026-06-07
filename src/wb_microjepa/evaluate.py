@@ -6,9 +6,8 @@ import yaml
 import torch
 import pandas as pd
 
-from .models import WBMICROJEPA
 from .worlds import ACTION_TO_ID, WORLD_ID
-from .train import choose_device
+from .train import choose_device, build_model
 
 
 @torch.no_grad()
@@ -34,6 +33,7 @@ def evaluate_transition_grid(model, cfg: Dict, device: torch.device) -> pd.DataF
                     "target": target,
                     "prediction": pred,
                     "correct": pred == target,
+                    "absolute_error": abs(pred - target),
                     "split": "train_range" if state <= train_max else "heldout_range",
                 })
 
@@ -49,6 +49,7 @@ def evaluate_transition_grid(model, cfg: Dict, device: torch.device) -> pd.DataF
                 "target": target,
                 "prediction": pred,
                 "correct": pred == target,
+                "absolute_error": abs(pred - target),
                 "split": "modulo_all",
             })
 
@@ -78,14 +79,18 @@ def main():
         cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
 
     device = choose_device(cfg)
-    model = WBMICROJEPA(cfg).to(device)
+    model = build_model(cfg).to(device)
     model.load_state_dict(torch.load(run_dir / "checkpoints" / "final.pt", map_location=device))
 
     df = evaluate_transition_grid(model, cfg, device)
     out = run_dir / "evaluation.csv"
     df.to_csv(out, index=False)
 
-    summary = df.groupby(["world", "split"])["correct"].mean().reset_index()
+    summary = df.groupby(["world", "split"]).agg(
+        accuracy=("correct", "mean"),
+        mean_absolute_error=("absolute_error", "mean"),
+        samples=("correct", "count"),
+    ).reset_index()
     print(summary.to_string(index=False))
     print(f"Saved: {out}")
 
