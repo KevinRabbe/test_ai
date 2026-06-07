@@ -1,9 +1,10 @@
 import argparse
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 import json
 import yaml
 import torch
+import torch.nn.functional as F
 import pandas as pd
 
 from .worlds import ACTION_TO_ID, WORLD_ID
@@ -19,37 +20,42 @@ def evaluate_transition_grid(model, cfg: Dict, device: torch.device) -> pd.DataF
     modulo_n = int(cfg["worlds"]["modulo_n"])
 
     model.eval()
+    state_bank = build_state_bank(model, cfg, device)
 
-    # Number line: evaluate full configured range.
     for state in range(0, max_number + 1):
         for action in actions:
             target = state + action
             if 0 <= target <= max_number:
-                pred = predict_one(model, device, WORLD_ID["number_line"], state, ACTION_TO_ID[action])
+                classifier_pred, nearest_pred = predict_both(model, device, state_bank, WORLD_ID["number_line"], state, ACTION_TO_ID[action])
                 rows.append({
                     "world": "number_line",
                     "state": state,
                     "action": action,
                     "target": target,
-                    "prediction": pred,
-                    "correct": pred == target,
-                    "absolute_error": abs(pred - target),
+                    "classifier_prediction": classifier_pred,
+                    "nearest_prediction": nearest_pred,
+                    "classifier_correct": classifier_pred == target,
+                    "nearest_correct": nearest_pred == target,
+                    "classifier_absolute_error": abs(classifier_pred - target),
+                    "nearest_absolute_error": abs(nearest_pred - target),
                     "split": "train_range" if state <= train_max else "heldout_range",
                 })
 
-    # Modulo world.
     for state in range(0, modulo_n):
         for action in actions:
             target = (state + action) % modulo_n
-            pred = predict_one(model, device, WORLD_ID["modulo_10"], state, ACTION_TO_ID[action])
+            classifier_pred, nearest_pred = predict_both(model, device, state_bank, WORLD_ID["modulo_10"], state, ACTION_TO_ID[action])
             rows.append({
                 "world": "modulo_10",
                 "state": state,
                 "action": action,
                 "target": target,
-                "prediction": pred,
-                "correct": pred == target,
-                "absolute_error": abs(pred - target),
+                "classifier_prediction": classifier_pred,
+                "nearest_prediction": nearest_pred,
+                "classifier_correct": classifier_pred == target,
+                "nearest_correct": nearest_pred == target,
+                "classifier_absolute_error": abs(classifier_pred - target),
+                "nearest_absolute_error": abs(nearest_pred - target),
                 "split": "modulo_all",
             })
 
@@ -57,12 +63,24 @@ def evaluate_transition_grid(model, cfg: Dict, device: torch.device) -> pd.DataF
 
 
 @torch.no_grad()
-def predict_one(model, device, world_id: int, state: int, action_id: int) -> int:
+def build_state_bank(model, cfg: Dict, device: torch.device) -> torch.Tensor:
+    states = torch.arange(int(cfg["model"]["num_numbers"]), dtype=torch.long, device=device)
+    bank = model.encode_state(states)
+    return F.normalize(bank, dim=-1)
+
+
+@torch.no_grad()
+def predict_both(model, device, state_bank: torch.Tensor, world_id: int, state: int, action_id: int) -> Tuple[int, int]:
     s = torch.tensor([state], dtype=torch.long, device=device)
     a = torch.tensor([action_id], dtype=torch.long, device=device)
     w = torch.tensor([world_id], dtype=torch.long, device=device)
-    logits, _ = model(s, a, w)
-    return int(logits.argmax(dim=-1).item())
+    logits, trace = model(s, a, w)
+    classifier_pred = int(logits.argmax(dim=-1).item())
+
+    pred_emb = F.normalize(trace["predicted_target_embedding"], dim=-1)
+    similarity = pred_emb @ state_bank.T
+    nearest_pred = int(similarity.argmax(dim=-1).item())
+    return classifier_pred, nearest_pred
 
 
 def main():
@@ -87,9 +105,11 @@ def main():
     df.to_csv(out, index=False)
 
     summary = df.groupby(["world", "split"]).agg(
-        accuracy=("correct", "mean"),
-        mean_absolute_error=("absolute_error", "mean"),
-        samples=("correct", "count"),
+        classifier_accuracy=("classifier_correct", "mean"),
+        nearest_accuracy=("nearest_correct", "mean"),
+        classifier_mae=("classifier_absolute_error", "mean"),
+        nearest_mae=("nearest_absolute_error", "mean"),
+        samples=("classifier_correct", "count"),
     ).reset_index()
     print(summary.to_string(index=False))
     print(f"Saved: {out}")
