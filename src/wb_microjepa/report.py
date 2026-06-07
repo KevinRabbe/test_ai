@@ -9,6 +9,28 @@ def img_tag(path: Path, run_dir: Path) -> str:
     return f'<div class="plot"><h3>{html.escape(path.name)}</h3><img src="{html.escape(rel)}" /></div>'
 
 
+def evaluation_summary(evaluation: pd.DataFrame) -> pd.DataFrame:
+    # New evaluation format: classifier and nearest-embedding decoding.
+    if "classifier_correct" in evaluation.columns and "nearest_correct" in evaluation.columns:
+        return evaluation.groupby(["world", "split"]).agg(
+            classifier_accuracy=("classifier_correct", "mean"),
+            nearest_accuracy=("nearest_correct", "mean"),
+            classifier_mae=("classifier_absolute_error", "mean"),
+            nearest_mae=("nearest_absolute_error", "mean"),
+            samples=("classifier_correct", "count"),
+        ).reset_index()
+
+    # Legacy evaluation format.
+    if "correct" in evaluation.columns:
+        return evaluation.groupby(["world", "split"]).agg(
+            accuracy=("correct", "mean"),
+            mean_absolute_error=("absolute_error", "mean") if "absolute_error" in evaluation.columns else ("correct", "count"),
+            samples=("correct", "count"),
+        ).reset_index()
+
+    raise ValueError("Unknown evaluation.csv schema. Expected classifier_correct/nearest_correct or correct column.")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("run_dir", type=str)
@@ -28,7 +50,7 @@ def main():
 
     if eval_path.exists():
         evaluation = pd.read_csv(eval_path)
-        summary = evaluation.groupby(["world", "split"])["correct"].mean().reset_index()
+        summary = evaluation_summary(evaluation)
         sections.append("<h2>Evaluation summary</h2>")
         sections.append(summary.to_html(index=False))
 
@@ -36,6 +58,13 @@ def main():
         stats = pd.read_csv(stats_path).sort_values("mean_probe_activation", ascending=False)
         sections.append("<h2>Top active micro-brains</h2>")
         sections.append(stats.head(30).to_html(index=False))
+
+    region_path = run_dir / "region_activation_summary.csv"
+    if region_path.exists():
+        regions = pd.read_csv(region_path)
+        sections.append("<h2>Latest region activation summary</h2>")
+        latest_epoch = regions["epoch"].max()
+        sections.append(regions[regions["epoch"] == latest_epoch].to_html(index=False))
 
     plot_paths = sorted((run_dir / "plots").glob("*.png")) if (run_dir / "plots").exists() else []
     if plot_paths:
