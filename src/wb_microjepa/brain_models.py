@@ -65,6 +65,8 @@ class BrainGraphCortexSwarm(nn.Module):
         use_world_modulation: bool,
         world_modulation_strength: float,
         world_modulation_regions: Optional[List[str]],
+        global_world_modulation_strength: Optional[float] = None,
+        targeted_world_modulation_strength: Optional[float] = None,
     ):
         super().__init__()
         self.graph = graph
@@ -73,13 +75,26 @@ class BrainGraphCortexSwarm(nn.Module):
         self.top_k = min(top_k, self.num_units)
         self.message_passing_steps = int(message_passing_steps)
         self.use_world_modulation = bool(use_world_modulation)
-        self.world_modulation_strength = float(world_modulation_strength)
+        self.legacy_world_modulation_strength = float(world_modulation_strength)
         self.world_modulation_regions = list(world_modulation_regions or [])
         allowed_region_ids = {
             REGION_TO_ID[region_name]
             for region_name in self.world_modulation_regions
             if region_name in REGION_TO_ID
         }
+        has_target_regions = len(allowed_region_ids) > 0
+        if global_world_modulation_strength is None and targeted_world_modulation_strength is None:
+            self.global_world_modulation_strength = float(
+                self.legacy_world_modulation_strength if not has_target_regions else 0.0
+            )
+            self.targeted_world_modulation_strength = float(
+                self.legacy_world_modulation_strength if has_target_regions else 0.0
+            )
+        else:
+            self.global_world_modulation_strength = float(global_world_modulation_strength or 0.0)
+            self.targeted_world_modulation_strength = float(
+                targeted_world_modulation_strength if targeted_world_modulation_strength is not None else 0.0
+            )
 
         self.unit_id = nn.Embedding(self.num_units, adapter_dim)
         self.region_embedding = nn.Embedding(len(REGION_TO_ID), adapter_dim)
@@ -145,8 +160,11 @@ class BrainGraphCortexSwarm(nn.Module):
         if self.use_world_modulation and world_emb is not None:
             scale = self.world_scale(world_emb)
             shift = self.world_shift(world_emb)
-            mask = self.world_modulation_mask.to(h.device).unsqueeze(0)
-            h = h * (1.0 + mask * self.world_modulation_strength * scale.unsqueeze(1)) + mask * self.world_modulation_strength * shift.unsqueeze(1)
+            if self.global_world_modulation_strength > 0.0:
+                h = h * (1.0 + self.global_world_modulation_strength * scale.unsqueeze(1)) + self.global_world_modulation_strength * shift.unsqueeze(1)
+            if self.targeted_world_modulation_strength > 0.0:
+                mask = self.world_modulation_mask.to(h.device).unsqueeze(0)
+                h = h * (1.0 + mask * self.targeted_world_modulation_strength * scale.unsqueeze(1)) + mask * self.targeted_world_modulation_strength * shift.unsqueeze(1)
         h = self._local_message_pass(h)
 
         raw_activation = self.activation_head(h).squeeze(-1)
@@ -179,6 +197,8 @@ class BrainGraphCortexSwarm(nn.Module):
             trace["world_scale"] = scale.detach()
             trace["world_shift"] = shift.detach()
             trace["world_modulation_mask"] = self.world_modulation_mask.detach().cpu()
+            trace["global_world_modulation_strength"] = torch.tensor(self.global_world_modulation_strength)
+            trace["targeted_world_modulation_strength"] = torch.tensor(self.targeted_world_modulation_strength)
         return aggregated_delta, trace
 
 
@@ -214,6 +234,12 @@ class BrainGraphMicroJEPA(nn.Module):
             use_world_modulation=bool(m.get("use_world_modulation", False)),
             world_modulation_strength=float(m.get("world_modulation_strength", 1.0)),
             world_modulation_regions=list(m.get("world_modulation_regions", [])),
+            global_world_modulation_strength=(
+                float(m["global_world_modulation_strength"]) if "global_world_modulation_strength" in m else None
+            ),
+            targeted_world_modulation_strength=(
+                float(m["targeted_world_modulation_strength"]) if "targeted_world_modulation_strength" in m else None
+            ),
         )
         self.decoder = MLP(m["embedding_dim"], m["hidden_dim"], m["num_numbers"], layers=2)
 

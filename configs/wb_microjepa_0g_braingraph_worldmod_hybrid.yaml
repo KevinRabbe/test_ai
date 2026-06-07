@@ -1,0 +1,68 @@
+run:
+  name: wb_microjepa_0g_braingraph_worldmod_hybrid
+  seed: 42
+  deterministic: true
+  clear_output: true
+  output_dir: runs
+
+worlds:
+  train_worlds:
+    - number_line
+    - modulo_10
+  max_number: 100
+  train_max_number: 60
+  actions: [-3, -2, -1, 1, 2, 3]
+  modulo_n: 10
+
+model:
+  type: brain_graph_microjepa
+  num_worlds: 2
+  num_numbers: 101
+  num_actions: 6
+  num_microbrains: 128
+  embedding_dim: 32
+  action_dim: 16
+  world_dim: 8
+  hidden_dim: 64
+  adapter_dim: 8
+  top_k_microbrains: 32
+  use_world_modulation: true
+  global_world_modulation_strength: 0.10
+  targeted_world_modulation_strength: 0.25
+  world_modulation_regions:
+    - cortex
+    - thalamus
+
+topology:
+  type: brain_graph_3d
+  seed: 42
+  grid:
+    x: 18
+    y: 14
+    z: 10
+  regions:
+    cortex: 96
+    thalamus: 8
+    hippocampus: 8
+    basal_ganglia: 4
+    cerebellum: 8
+    brainstem: 4
+  local_radius: 0.34
+  max_neighbors: 8
+  message_passing_steps: 1
+
+training:
+  epochs: 200
+  batch_size: 256
+  learning_rate: 0.0003
+  weight_decay: 0.01
+  log_every_epochs: 10
+  probe_every_epochs: 10
+  device: auto
+
+loss:
+  prediction_weight: 1.0
+  identity_weight: 0.5
+  sparsity_weight: 0.001
+  diversity_weight: 0.001
+  delta_consistency_weight: 0.1
