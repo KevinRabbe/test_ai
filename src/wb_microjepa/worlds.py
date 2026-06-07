@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, List, Optional, Sequence, Tuple
 import random
 
 
@@ -45,9 +45,20 @@ class NumberLineWorld:
         target = state + action
         return self.min_number <= state <= self.max_number and self.min_number <= target <= self.max_number
 
-    def sample(self, actions: List[int], train_max_number: int) -> Transition:
+    def _sample_state_from_ranges(self, ranges: Sequence[Tuple[int, int]]) -> int:
+        expanded: List[int] = []
+        for start, end in ranges:
+            expanded.extend(list(range(int(start), int(end) + 1)))
+        if not expanded:
+            raise ValueError("NumberLineWorld received empty train_ranges.")
+        return random.choice(expanded)
+
+    def sample(self, actions: List[int], train_max_number: int, train_ranges: Optional[Sequence[Tuple[int, int]]] = None) -> Transition:
         while True:
-            state = random.randint(self.min_number, train_max_number)
+            if train_ranges:
+                state = self._sample_state_from_ranges(train_ranges)
+            else:
+                state = random.randint(self.min_number, train_max_number)
             action = random.choice(actions)
             if self.valid(state, action):
                 target = self.step(state, action)
@@ -65,8 +76,9 @@ class ModuloWorld:
     def valid(self, state: int, action: int) -> bool:
         return 0 <= state < self.modulo_n
 
-    def sample(self, actions: List[int], train_max_number: int) -> Transition:
+    def sample(self, actions: List[int], train_max_number: int, train_ranges: Optional[Sequence[Tuple[int, int]]] = None) -> Transition:
         del train_max_number
+        del train_ranges
         state = random.randint(0, self.modulo_n - 1)
         action = random.choice(actions)
         target = self.step(state, action)
@@ -74,9 +86,10 @@ class ModuloWorld:
 
 
 class MixedWorldSampler:
-    def __init__(self, world_names: List[str], max_number: int, train_max_number: int, actions: List[int], modulo_n: int):
+    def __init__(self, world_names: List[str], max_number: int, train_max_number: int, actions: List[int], modulo_n: int, train_ranges: Optional[List[List[int]]] = None):
         self.actions = actions
         self.train_max_number = train_max_number
+        self.train_ranges = [tuple(r) for r in train_ranges] if train_ranges else None
         self.worlds = []
         for name in world_names:
             if name == "number_line":
@@ -87,7 +100,10 @@ class MixedWorldSampler:
                 raise ValueError(f"Unknown world: {name}")
 
     def sample_batch(self, batch_size: int) -> Dict[str, List[int]]:
-        transitions = [random.choice(self.worlds).sample(self.actions, self.train_max_number) for _ in range(batch_size)]
+        transitions = [
+            random.choice(self.worlds).sample(self.actions, self.train_max_number, self.train_ranges)
+            for _ in range(batch_size)
+        ]
         return {
             "world_id": [t.world_id for t in transitions],
             "state": [t.state for t in transitions],

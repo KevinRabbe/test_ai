@@ -293,6 +293,7 @@ def train(config_path: str):
         train_max_number=cfg["worlds"]["train_max_number"],
         actions=cfg["worlds"]["actions"],
         modulo_n=cfg["worlds"]["modulo_n"],
+        train_ranges=cfg["worlds"].get("train_ranges"),
     )
 
     model = build_model(cfg).to(device)

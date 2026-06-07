@@ -27,7 +27,22 @@ def load_compatible_state_dict(model: torch.nn.Module, checkpoint_path: Path) ->
 
 def case_type_for(world: str, state: int, action: int, target: int, cfg: Dict) -> str:
     if world == "number_line":
-        train_max = int(cfg["worlds"]["train_max_number"])
+        worlds = cfg.get("worlds", {})
+        train_ranges = worlds.get("train_ranges")
+        heldout_ranges = worlds.get("heldout_ranges")
+        if train_ranges and heldout_ranges:
+            train_ranges = [tuple(r) for r in train_ranges]
+            heldout_ranges = [tuple(r) for r in heldout_ranges]
+            if train_ranges[0][0] <= state <= train_ranges[0][1]:
+                return "range_train_low"
+            if len(train_ranges) > 1 and train_ranges[1][0] <= state <= train_ranges[1][1]:
+                return "range_train_high"
+            if heldout_ranges[0][0] <= state <= heldout_ranges[0][1]:
+                return "range_heldout_gap"
+            if len(heldout_ranges) > 1 and heldout_ranges[1][0] <= state <= heldout_ranges[1][1]:
+                return "range_heldout_extrap"
+            return "range_unknown"
+        train_max = int(worlds["train_max_number"])
         return "normal_small" if state <= train_max else "normal_heldout"
 
     if world == "modulo_10":
@@ -71,8 +86,13 @@ def evaluate_transition_grid(model, cfg: Dict, device: torch.device) -> Tuple[pd
     region_rows: List[Dict] = []
     actions = cfg["worlds"]["actions"]
     max_number = int(cfg["worlds"]["max_number"])
-    train_max = int(cfg["worlds"]["train_max_number"])
     modulo_n = int(cfg["worlds"]["modulo_n"])
+    train_ranges = cfg["worlds"].get("train_ranges")
+    heldout_ranges = cfg["worlds"].get("heldout_ranges")
+    range_mode = bool(train_ranges and heldout_ranges)
+    if range_mode:
+        train_ranges = [tuple(r) for r in train_ranges]
+        heldout_ranges = [tuple(r) for r in heldout_ranges]
 
     model.eval()
     state_bank = build_state_bank(model, cfg, device)
@@ -83,9 +103,22 @@ def evaluate_transition_grid(model, cfg: Dict, device: torch.device) -> Tuple[pd
             if 0 <= target <= max_number:
                 classifier_pred, nearest_pred = predict_both(model, device, state_bank, WORLD_ID["number_line"], state, ACTION_TO_ID[action])
                 logits, trace = forward_with_trace(model, device, "number_line", state, ACTION_TO_ID[action])
+                if range_mode:
+                    if train_ranges[0][0] <= state <= train_ranges[0][1]:
+                        split = "range_train_low"
+                    elif len(train_ranges) > 1 and train_ranges[1][0] <= state <= train_ranges[1][1]:
+                        split = "range_train_high"
+                    elif heldout_ranges[0][0] <= state <= heldout_ranges[0][1]:
+                        split = "range_heldout_gap"
+                    elif len(heldout_ranges) > 1 and heldout_ranges[1][0] <= state <= heldout_ranges[1][1]:
+                        split = "range_heldout_extrap"
+                    else:
+                        split = "range_unknown"
+                else:
+                    split = "train_range" if state <= int(cfg["worlds"]["train_max_number"]) else "heldout_range"
                 region_rows.extend(region_case_rows(
                     "number_line",
-                    "train_range" if state <= train_max else "heldout_range",
+                    split,
                     case_type_for("number_line", state, action, target, cfg),
                     trace["activations"][0],
                     trace["region_ids"],
@@ -102,7 +135,7 @@ def evaluate_transition_grid(model, cfg: Dict, device: torch.device) -> Tuple[pd
                     "nearest_correct": nearest_pred == target,
                     "classifier_absolute_error": abs(classifier_pred - target),
                     "nearest_absolute_error": abs(nearest_pred - target),
-                    "split": "train_range" if state <= train_max else "heldout_range",
+                    "split": split,
                 })
 
     for state in range(0, modulo_n):
