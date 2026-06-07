@@ -66,7 +66,7 @@ def region_case_rows(world: str, split: str, case_type: str, activations: torch.
 
 
 @torch.no_grad()
-def evaluate_transition_grid(model, cfg: Dict, device: torch.device) -> pd.DataFrame:
+def evaluate_transition_grid(model, cfg: Dict, device: torch.device) -> Tuple[pd.DataFrame, List[Dict]]:
     rows: List[Dict] = []
     region_rows: List[Dict] = []
     actions = cfg["worlds"]["actions"]
@@ -133,8 +133,7 @@ def evaluate_transition_grid(model, cfg: Dict, device: torch.device) -> pd.DataF
             })
 
     df = pd.DataFrame(rows)
-    df.attrs["region_rows"] = region_rows
-    return df
+    return df, region_rows
 
 
 @torch.no_grad()
@@ -183,11 +182,10 @@ def main():
     model = build_model(cfg).to(device)
     load_compatible_state_dict(model, run_dir / "checkpoints" / "final.pt")
 
-    df = evaluate_transition_grid(model, cfg, device)
+    df, region_case_rows_out = evaluate_transition_grid(model, cfg, device)
     out = run_dir / "evaluation.csv"
     df.to_csv(out, index=False)
 
-    region_case_rows_out = df.attrs.get("region_rows", [])
     if region_case_rows_out:
         region_case_df = pd.DataFrame(region_case_rows_out)
         region_case_summary = region_case_df.groupby(["world", "split", "case_type", "region"]).agg(

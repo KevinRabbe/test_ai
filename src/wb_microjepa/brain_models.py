@@ -1,4 +1,4 @@
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 import math
 import torch
 import torch.nn as nn
@@ -61,6 +61,9 @@ class BrainGraphCortexSwarm(nn.Module):
         adapter_dim: int,
         top_k: int,
         message_passing_steps: int,
+        world_dim: int,
+        use_world_modulation: bool,
+        world_modulation_strength: float,
     ):
         super().__init__()
         self.graph = graph
@@ -68,6 +71,8 @@ class BrainGraphCortexSwarm(nn.Module):
         self.embedding_dim = embedding_dim
         self.top_k = min(top_k, self.num_units)
         self.message_passing_steps = int(message_passing_steps)
+        self.use_world_modulation = bool(use_world_modulation)
+        self.world_modulation_strength = float(world_modulation_strength)
 
         self.unit_id = nn.Embedding(self.num_units, adapter_dim)
         self.region_embedding = nn.Embedding(len(REGION_TO_ID), adapter_dim)
@@ -79,6 +84,17 @@ class BrainGraphCortexSwarm(nn.Module):
         self.activation_head = nn.Linear(hidden_dim, 1)
         self.confidence_head = nn.Linear(hidden_dim, 1)
         self.vote_head = nn.Linear(hidden_dim, embedding_dim)
+
+        if self.use_world_modulation:
+            self.world_scale = nn.Linear(world_dim, hidden_dim)
+            self.world_shift = nn.Linear(world_dim, hidden_dim)
+            nn.init.zeros_(self.world_scale.weight)
+            nn.init.zeros_(self.world_scale.bias)
+            nn.init.zeros_(self.world_shift.weight)
+            nn.init.zeros_(self.world_shift.bias)
+        else:
+            self.world_scale = None
+            self.world_shift = None
 
         self.register_buffer("neighbor_indices", graph.neighbor_indices)
         self.register_buffer("neighbor_mask", graph.neighbor_mask)
@@ -102,7 +118,7 @@ class BrainGraphCortexSwarm(nn.Module):
             h = self.message_norm(h + self.message_projection(neighbor_mean))
         return h
 
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+    def forward(self, x: torch.Tensor, world_emb: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         batch = x.shape[0]
         ids = torch.arange(self.num_units, device=x.device)
         unit_emb = self.unit_id(ids)
@@ -114,6 +130,10 @@ class BrainGraphCortexSwarm(nn.Module):
         topo_exp = topology_emb.unsqueeze(0).expand(batch, self.num_units, topology_emb.shape[-1])
 
         h = self.shared_core(torch.cat([x_exp, topo_exp], dim=-1))
+        if self.use_world_modulation and world_emb is not None:
+            scale = 1.0 + self.world_modulation_strength * self.world_scale(world_emb)
+            shift = self.world_modulation_strength * self.world_shift(world_emb)
+            h = h * scale.unsqueeze(1) + shift.unsqueeze(1)
         h = self._local_message_pass(h)
 
         raw_activation = self.activation_head(h).squeeze(-1)
@@ -142,6 +162,9 @@ class BrainGraphCortexSwarm(nn.Module):
             "coords": self.coords.detach().cpu(),
             "region_ids": self.region_ids.detach().cpu(),
         }
+        if self.use_world_modulation and world_emb is not None:
+            trace["world_scale"] = scale.detach()
+            trace["world_shift"] = shift.detach()
         return aggregated_delta, trace
 
 
@@ -173,6 +196,9 @@ class BrainGraphMicroJEPA(nn.Module):
             adapter_dim=m["adapter_dim"],
             top_k=m["top_k_microbrains"],
             message_passing_steps=int(cfg.get("topology", {}).get("message_passing_steps", 1)),
+            world_dim=m["world_dim"],
+            use_world_modulation=bool(m.get("use_world_modulation", False)),
+            world_modulation_strength=float(m.get("world_modulation_strength", 1.0)),
         )
         self.decoder = MLP(m["embedding_dim"], m["hidden_dim"], m["num_numbers"], layers=2)
 
@@ -190,7 +216,7 @@ class BrainGraphMicroJEPA(nn.Module):
         world_emb = self.world_embedding(world_id)
         x = self.input_norm(torch.cat([state_emb, action_emb, world_emb], dim=-1))
 
-        delta, trace = self.cortex(x)
+        delta, trace = self.cortex(x, world_emb=world_emb)
         predicted_target_emb = state_emb + delta
         logits = self.decoder(predicted_target_emb)
         decoded = logits.argmax(dim=-1)
