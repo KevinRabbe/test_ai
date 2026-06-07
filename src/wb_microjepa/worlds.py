@@ -129,11 +129,22 @@ class ModuloWorld:
 
 
 class MixedWorldSampler:
-    def __init__(self, world_names: List[str], max_number: int, train_max_number: int, actions: List[int], modulo_n: int, train_ranges: Optional[List[List[int]]] = None, curriculum_phases: Optional[List[Dict]] = None):
+    def __init__(
+        self,
+        world_names: List[str],
+        max_number: int,
+        train_max_number: int,
+        actions: List[int],
+        modulo_n: int,
+        train_ranges: Optional[List[List[int]]] = None,
+        curriculum_phases: Optional[List[Dict]] = None,
+        curriculum_schedule: Optional[List[Dict]] = None,
+    ):
         self.actions = actions
         self.train_max_number = train_max_number
         self.train_ranges = [tuple(r) for r in train_ranges] if train_ranges else None
         self.curriculum_phases = curriculum_phases or []
+        self.curriculum_schedule = curriculum_schedule or []
         self.worlds = []
         for name in world_names:
             if name == "number_line":
@@ -144,12 +155,72 @@ class MixedWorldSampler:
                 raise ValueError(f"Unknown world: {name}")
 
     def _phase_for_epoch(self, epoch: Optional[int]) -> Optional[Dict]:
+        if epoch is None:
+            return None
+        if self.curriculum_schedule:
+            return self._scheduled_phase_for_epoch(epoch)
         if epoch is None or not self.curriculum_phases:
             return None
         for phase in self.curriculum_phases:
             if int(phase.get("start_epoch", 1)) <= epoch <= int(phase.get("end_epoch", epoch)):
                 return phase
         return self.curriculum_phases[-1]
+
+    def _blend_values(self, left, right, t: float):
+        if left is None:
+            return right
+        if right is None:
+            return left
+        if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+            return float(left) + (float(right) - float(left)) * t
+        if isinstance(left, dict) and isinstance(right, dict):
+            keys = set(left) | set(right)
+            blended = {}
+            for key in keys:
+                if key in left and key in right:
+                    blended[key] = self._blend_values(left[key], right[key], t)
+                elif key in left:
+                    blended[key] = left[key]
+                else:
+                    blended[key] = right[key]
+            return blended
+        if isinstance(left, (list, tuple)) and isinstance(right, (list, tuple)) and len(left) == len(right):
+            return [self._blend_values(lv, rv, t) for lv, rv in zip(left, right)]
+        return right if t >= 0.5 else left
+
+    def _scheduled_phase_for_epoch(self, epoch: int) -> Dict:
+        schedule = sorted(self.curriculum_schedule, key=lambda p: int(p.get("epoch", 1)))
+        if not schedule:
+            return {}
+        if len(schedule) == 1:
+            return dict(schedule[0])
+
+        if epoch <= int(schedule[0].get("epoch", 1)):
+            return dict(schedule[0])
+        if epoch >= int(schedule[-1].get("epoch", epoch)):
+            return dict(schedule[-1])
+
+        for left, right in zip(schedule, schedule[1:]):
+            left_epoch = int(left.get("epoch", 1))
+            right_epoch = int(right.get("epoch", left_epoch))
+            if left_epoch <= epoch <= right_epoch:
+                if right_epoch == left_epoch:
+                    return dict(left)
+                t = (epoch - left_epoch) / float(right_epoch - left_epoch)
+                blended = {}
+                keys = set(left) | set(right)
+                for key in keys:
+                    if key == "epoch":
+                        blended[key] = epoch
+                    elif key == "name":
+                        left_name = str(left.get("name", "phase"))
+                        right_name = str(right.get("name", "phase"))
+                        blended[key] = f"{left_name}_to_{right_name}"
+                    else:
+                        blended[key] = self._blend_values(left.get(key), right.get(key), t)
+                return blended
+
+        return dict(schedule[-1])
 
     def current_phase_name(self, epoch: Optional[int]) -> str:
         phase = self._phase_for_epoch(epoch)

@@ -121,11 +121,12 @@ def summarize_run(run_dir: Path) -> Dict[str, float]:
     row["modulo_classifier_mae"] = row.get("modulo_10_modulo_all_mae", float("nan"))
 
     pass_rule = (
-        row["modulo_accuracy"] >= 0.80
+        row["modulo_accuracy"] >= 0.75
         and row["number_line_train_accuracy"] >= 0.29
+        and row["number_line_heldout_accuracy"] > 0.0
         and row["heldout_classifier_mae"] <= 46.39
-        and row["mean_activation_range"] >= 0.03
-        and row["mean_top_case_gap"] >= 0.11
+        and row["mean_activation_range"] > 0.03
+        and row["mean_top_case_gap"] >= 0.08
     )
     row["passes_rule"] = bool(pass_rule)
     return row

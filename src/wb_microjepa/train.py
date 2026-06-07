@@ -295,6 +295,7 @@ def train(config_path: str):
         modulo_n=cfg["worlds"]["modulo_n"],
         train_ranges=cfg["worlds"].get("train_ranges"),
         curriculum_phases=cfg["training"].get("curriculum_phases"),
+        curriculum_schedule=cfg["training"].get("curriculum_schedule"),
     )
 
     model = build_model(cfg).to(device)
