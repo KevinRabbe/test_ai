@@ -1,9 +1,48 @@
 from typing import Dict, Tuple
+import math
 import torch
 import torch.nn as nn
 
 from .brain_topology import BrainGraph, build_brain_graph, REGION_TO_ID
 from .models import MLP
+
+
+class NumericStateEncoder(nn.Module):
+    """State encoder with optional continuous number features.
+
+    This is not an answer shortcut. It gives the model a continuous input
+    representation so held-out numeric states are not pure unseen ID rows.
+    """
+
+    def __init__(self, num_numbers: int, embedding_dim: int, hidden_dim: int, use_numeric_features: bool, id_weight: float):
+        super().__init__()
+        self.num_numbers = int(num_numbers)
+        self.embedding_dim = int(embedding_dim)
+        self.use_numeric_features = bool(use_numeric_features)
+        self.id_weight = float(id_weight)
+        self.id_embedding = nn.Embedding(num_numbers, embedding_dim)
+
+        if self.use_numeric_features:
+            # n/max, centered n, parity, sin/cos low frequency.
+            self.numeric_mlp = MLP(5, hidden_dim, embedding_dim, layers=2)
+        else:
+            self.numeric_mlp = None
+
+    def _features(self, state: torch.Tensor) -> torch.Tensor:
+        s = state.float()
+        denom = float(max(1, self.num_numbers - 1))
+        n01 = s / denom
+        centered = n01 * 2.0 - 1.0
+        parity = (state % 2).float()
+        phase = n01 * math.tau
+        return torch.stack([n01, centered, parity, torch.sin(phase), torch.cos(phase)], dim=-1)
+
+    def forward(self, state: torch.Tensor) -> torch.Tensor:
+        id_emb = self.id_embedding(state)
+        if not self.use_numeric_features:
+            return id_emb
+        numeric_emb = self.numeric_mlp(self._features(state))
+        return numeric_emb + self.id_weight * id_emb
 
 
 class BrainGraphCortexSwarm(nn.Module):
@@ -114,7 +153,13 @@ class BrainGraphMicroJEPA(nn.Module):
         self.num_numbers = int(m["num_numbers"])
         self.embedding_dim = int(m["embedding_dim"])
 
-        self.state_embedding = nn.Embedding(m["num_numbers"], m["embedding_dim"])
+        self.state_encoder = NumericStateEncoder(
+            num_numbers=m["num_numbers"],
+            embedding_dim=m["embedding_dim"],
+            hidden_dim=m["hidden_dim"],
+            use_numeric_features=bool(m.get("use_numeric_state_features", False)),
+            id_weight=float(m.get("state_id_weight", 1.0)),
+        )
         self.action_embedding = nn.Embedding(m["num_actions"], m["action_dim"])
         self.world_embedding = nn.Embedding(m["num_worlds"], m["world_dim"])
 
@@ -131,11 +176,16 @@ class BrainGraphMicroJEPA(nn.Module):
         )
         self.decoder = MLP(m["embedding_dim"], m["hidden_dim"], m["num_numbers"], layers=2)
 
+    @property
+    def state_embedding(self):
+        # Compatibility for older monitoring code that expects an embedding table.
+        return self.state_encoder.id_embedding
+
     def encode_state(self, state: torch.Tensor) -> torch.Tensor:
-        return self.state_embedding(state)
+        return self.state_encoder(state)
 
     def forward(self, state: torch.Tensor, action_id: torch.Tensor, world_id: torch.Tensor) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
-        state_emb = self.state_embedding(state)
+        state_emb = self.encode_state(state)
         action_emb = self.action_embedding(action_id)
         world_emb = self.world_embedding(world_id)
         x = self.input_norm(torch.cat([state_emb, action_emb, world_emb], dim=-1))
